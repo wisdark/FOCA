@@ -1,4 +1,12 @@
-﻿using System;
+﻿using FOCA.Analysis.FingerPrinting;
+using FOCA.Database.Entities;
+using FOCA.ModifiedComponents;
+using FOCA.Properties;
+using Microsoft.Win32;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Serialization;
+using PluginsAPI.ImportElements;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -6,13 +14,6 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
-using FOCA.Analysis.FingerPrinting;
-using FOCA.ModifiedComponents;
-using FOCA.Properties;
-using Microsoft.Win32;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Serialization;
-using PluginsAPI.ImportElements;
 
 namespace FOCA.GUI
 {
@@ -120,7 +121,7 @@ namespace FOCA.GUI
 
             tsiSave.Click +=
                 delegate { Program.FormMainInstance.ProjectManager.SaveProject(Program.data.Project.ProjectSaveFile); };
-            
+
             Program.FormMainInstance.contextMenu.Items.Add(tsiNewProject);
             Program.FormMainInstance.contextMenu.Items.Add(new ToolStripSeparator());
             Program.FormMainInstance.contextMenu.Items.Add(tsiSave);
@@ -130,7 +131,7 @@ namespace FOCA.GUI
             foreach (var pluginMenu in Program.FormMainInstance.ManagePluginsApi.lstContextShowProjectMenu)
             {
                 var tsiPlugin = pluginMenu.item;
-                var project = new Project(Program.data.Project.Domain, Program.data.Project.AlternativeDomains);
+                var project = new PluginsAPI.ImportElements.Project(Program.data.Project.Domain, Program.data.Project.AlternativeDomains);
                 tsiPlugin.Tag = project;
                 Program.FormMainInstance.contextMenu.Items.Add(tsiPlugin);
             }
@@ -231,7 +232,7 @@ namespace FOCA.GUI
 
             var tsiExportClient = new ToolStripMenuItem("Export client") { Image = Resources.report };
             var tsiRemoveClient = new ToolStripMenuItem("Remove Client") { Image = Resources.delete };
-            var tsiReferingDocuments = new ToolStripMenuItem("Refering documents") { Image = Resources.link };
+            var tsiReferingDocuments = new ToolStripMenuItem("Referring documents") { Image = Resources.link };
             var tsiModifyInformation = new ToolStripMenuItem("&Modify information") { Image = Resources.page_white_edit };
             var tsiModifySoftware = new ToolStripMenuItem("Add Software") { Image = Resources.tech };
             var tsiModifyUser = new ToolStripMenuItem("Add User") { Image = Resources.group };
@@ -255,19 +256,16 @@ namespace FOCA.GUI
             };
             tsiRemoveClient.Click += delegate
             {
-                var comp = (ComputersItem)tn.Tag;
-                Program.data.computers.Items.Remove(comp);
+                Program.data.computers.Items.Remove(computer);
             };
             tsiModifySoftware.Click += delegate
             {
-                var comp = (ComputersItem)tn.Tag;
-                var fModDat = new FormModifyData(comp.Software) { StartPosition = FormStartPosition.CenterParent };
+                var fModDat = new FormModifyData(computer.Software) { StartPosition = FormStartPosition.CenterParent };
                 fModDat.ShowDialog();
             };
             tsiModifyUser.Click += delegate
             {
-                var comp = (ComputersItem)tn.Tag;
-                var fModDat = new FormModifyData(comp.Users) { StartPosition = FormStartPosition.CenterParent };
+                var fModDat = new FormModifyData(computer.Users) { StartPosition = FormStartPosition.CenterParent };
                 fModDat.ShowDialog();
             };
             tsiModifyDescription.Click += delegate
@@ -663,7 +661,7 @@ namespace FOCA.GUI
 
         public static void ShowNetworkUnlocatedMenu(TreeNode tn, Control sourceControl)
         {
-            var tsiExport = new ToolStripMenuItem("&Export unlocated servers") { Image = Resources.exportDomain };
+            var tsiExport = new ToolStripMenuItem("&Export unknown servers") { Image = Resources.exportDomain };
             var tsiRemoveAll = new ToolStripMenuItem("&Remove all") { Image = Resources.delete };
 
             tsiExport.Click += delegate
@@ -672,12 +670,12 @@ namespace FOCA.GUI
                 if (sfd.ShowDialog() != DialogResult.OK) return;
 
                 var sb = new StringBuilder();
-                sb.Append("{\"Unlocated servers\": [");
+                sb.Append("{\"Unknown servers\": [");
                 foreach (
                     TreeNode tnn in
                         Program.FormMainInstance.TreeView.Nodes[UpdateGUI.TreeViewKeys.KProject.ToString()]
                             .Nodes[UpdateGUI.TreeViewKeys.KPCServers.ToString()].Nodes["Servers"].Nodes[
-                                "Unlocated servers"].Nodes)
+                                "Unknown servers"].Nodes)
                     sb.Append(JsonConvert.SerializeObject(tnn.Text, Formatting.Indented, settings) + ",");
                 sb.Remove(sb.Length - 1, 1);
                 sb.Append("]}");
@@ -1038,20 +1036,24 @@ namespace FOCA.GUI
             };
 
             tsiFingerHTTP.Click +=
-                delegate {
+                delegate
+                {
                     FingerPrintingEventHandler.data_NewWebDomain(domainItem, null); // fingerprinting http
                 };
 
             tsiFingerDNS.Click +=
-                delegate {
+                delegate
+                {
                     FingerPrintingEventHandler.data_NewDNSDomain(domainItem, null); // fingerprinting dns
                 };
             tsiFingerSMTP.Click +=
-                delegate {
+                delegate
+                {
                     FingerPrintingEventHandler.data_NewMXDomain(domainItem, null); // fingerprinting mail
                 };
             tsiFingerFTP.Click +=
-                delegate {
+                delegate
+                {
                     FingerPrintingEventHandler.data_NewFTPDomain(domainItem, null); // fingerprinting ftp
                 };
             tsiFingerAll.Click += delegate

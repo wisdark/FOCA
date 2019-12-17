@@ -1,30 +1,23 @@
+using FOCA.Threads;
 using System;
 using System.Collections.Generic;
-using System.Text;
-using System.Threading;
-using System.Net;
 using System.IO;
-using System.Linq;
-using System.Text.RegularExpressions;
-using System.Windows.Forms;
-using FOCA.Threads;
-using System.Web;
+using System.Net;
 using System.Net.Cache;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Web;
 
 namespace FOCA.Searcher
 {
-
-    public class GoogleWebSearcher : WebSearcher
+    public class GoogleWebSearcher : LinkSearcher
     {
-        public const string ipv4Google = "https://ipv4.google.com";
-        public const int maxResultPerPage = 100;
-        public const int maxResults = 1000;
+        private const string IPv4Google = "https://ipv4.google.com";
+        private const int MaxResultPerPage = 100;
+        private const int MaxResults = 1000;
 
-        private static string strCaptchaCookie = string.Empty;
-        private static Form frmCaptcha;
-        
-        public int ResultsPerPage { get; set; }
-        public int Offset { get; set; }
+        private static readonly Regex googleWebUriRegex = new Regex("q=(?<url>https?:\\/\\/[^>]+)&amp;sa", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         public enum SafeSearch { off, moderate, active };
         public SafeSearch cSafeSearch { get; set; }
@@ -38,148 +31,49 @@ namespace FOCA.Searcher
         public enum FirstSeenGoogle { AnyTime, past24Hours, pastWeek, pastMonth, pastYear };
         public FirstSeenGoogle FirstSeen { get; set; }
 
-        public GoogleWebSearcher()
+        private static readonly string[] supportedFileTypes = new string[] { "doc", "ppt", "pps", "xls", "docx", "pptx", "ppsx", "xlsx", "sxw", "odt", "ods", "odg", "odp", "pdf", "rtf" };
+
+        public GoogleWebSearcher() : base("GoogleWeb", supportedFileTypes)
         {
-            strName = "GoogleWeb";
         }
 
-        /// <summary>
-        /// Get links
-        /// </summary>
-        public override void GetLinks()
+        protected override int Search(string customSearchString, CancellationToken cancelToken)
         {
-            if (thrSearchLinks != null && thrSearchLinks.IsAlive) return;
-            thrSearchLinks = new Thread(GetLinksAsync)
-            {
-                Priority     = ThreadPriority.Lowest,
-                IsBackground = true
-            };
-            thrSearchLinks.Start();
+            return GetGoogleAllLinks(customSearchString, cancelToken);
         }
 
-        /// <summary>
-        /// Get custom links
-        /// </summary>
-        /// <param name="customSearchString"></param>
-        public override void GetCustomLinks(string customSearchString)
-        {
-            if (thrSearchLinks != null && thrSearchLinks.IsAlive) return;
-
-            thrSearchLinks = new Thread(GetCustomLinksAsync)
-            {
-                Priority     = ThreadPriority.Lowest,
-                IsBackground = true
-            };
-            thrSearchLinks.Start(customSearchString);
-        }
-
-        /// <summary>
-        /// Get links async
-        /// </summary>
-        private void GetLinksAsync()
-        {
-            OnSearcherStartEvent(null);
-            OnSearcherChangeStateEvent(new EventsThreads.ThreadStringEventArgs("Searching links in " + Name + "..."));
-            try
-            {
-                foreach (var strExtension in Extensions)
-                {
-                    OnSearcherChangeStateEvent(new EventsThreads.ThreadStringEventArgs("Search " + strExtension + " in " + Name));
-                    GetGoogleAllLinks("site:" + Site + " filetype:" + strExtension);
-                }
-
-                OnSearcherEndEvent(new EventsThreads.ThreadEndEventArgs(EventsThreads.ThreadEndEventArgs.EndReasonEnum.NoMoreData));
-            }
-            catch (ThreadAbortException)
-            {
-                OnSearcherEndEvent(new EventsThreads.ThreadEndEventArgs(EventsThreads.ThreadEndEventArgs.EndReasonEnum.Stopped));
-            }
-            catch
-            {
-                OnSearcherEndEvent(new EventsThreads.ThreadEndEventArgs(EventsThreads.ThreadEndEventArgs.EndReasonEnum.ErrorFound));
-            }
-        }
-
-        /// <summary>
-        /// Get custom links async
-        /// </summary>
-        /// <param name="CustomSearchString"></param>
-        private void GetCustomLinksAsync(object CustomSearchString)
-        {
-            OnSearcherStartEvent(null);
-            OnSearcherChangeStateEvent(new EventsThreads.ThreadStringEventArgs("Searching links in " + Name + "..."));
-            try
-            {
-                if (SearchAll)
-                    OnSearcherEndEvent(GetGoogleAllLinks((string) CustomSearchString) == maxResults
-                        ? new EventsThreads.ThreadEndEventArgs(
-                            EventsThreads.ThreadEndEventArgs.EndReasonEnum.LimitReached)
-                        : new EventsThreads.ThreadEndEventArgs(EventsThreads.ThreadEndEventArgs.EndReasonEnum.NoMoreData));
-                else
-                {
-                    GetGoogleLinks((string)CustomSearchString);
-                    OnSearcherEndEvent(new EventsThreads.ThreadEndEventArgs(EventsThreads.ThreadEndEventArgs.EndReasonEnum.NoMoreData));
-                }
-
-            }
-            catch (ThreadAbortException)
-            {
-                OnSearcherEndEvent(new EventsThreads.ThreadEndEventArgs(EventsThreads.ThreadEndEventArgs.EndReasonEnum.Stopped));
-            }
-            catch
-            {
-                OnSearcherEndEvent(new EventsThreads.ThreadEndEventArgs(EventsThreads.ThreadEndEventArgs.EndReasonEnum.ErrorFound));
-            }
-        }
-
-        /// <summary>
-        /// Get google results.
-        /// </summary>
-        /// <param name="searchString"></param>
-        /// <param name="currentResultPerPage"></param>
-        /// <param name="currentOffset"></param>
-        /// <param name="moreResults"></param>
-        /// <returns></returns>
-        private int GetGoogleResults(string searchString, int currentResultPerPage, int currentOffset, out bool moreResults)
+        private int GetGoogleResults(string searchString, int currentResultPerPage, int currentOffset, CancellationToken cancelToken, out bool moreResults)
         {
             HttpWebRequest request;
-            var policy = new RequestCachePolicy(RequestCacheLevel.NoCacheNoStore);
-
             byte retries = 0;
-            bool Error;
+            bool error;
             HttpWebResponse response = null;
             string referer = string.Empty;
             OnSearcherLogEvent(new EventsThreads.ThreadStringEventArgs(string.Format("[{0}] Searching first={2} q={1}", Name, searchString, currentOffset)));
+
+            StringBuilder urlBuilder = new StringBuilder(String.Format("https://www.google.com/search?start={1}&num={0}&filter=0&q={2}", currentResultPerPage, currentOffset, HttpUtility.UrlEncode(searchString, Encoding.UTF8)));
+
+            if (cSafeSearch != SafeSearch.off)
+                urlBuilder.Append("&safe=" + SafeSearchToString(cSafeSearch));
+            if (LocatedInRegion != Region.AnyRegion)
+                urlBuilder.Append("&cr=" + RegionToHtmlOption(LocatedInRegion));
+            if (FirstSeen != FirstSeenGoogle.AnyTime)
+                urlBuilder.Append("&as_qdr=" + FirstSeenToHtmlOption(FirstSeen));
+            if (WriteInLanguage != Language.AnyLanguage)
+                urlBuilder.Append("&lr=" + LanguageToHtmlOption(WriteInLanguage));
+
             do
             {
-                var sb = new StringBuilder(string.Format("https://www.google.com/search?start={1}&num={0}&filter=0&q={2}", currentResultPerPage, currentOffset, HttpUtility.UrlEncode(searchString, Encoding.UTF8)));
-
-                if (!string.IsNullOrEmpty(strCaptchaCookie))
-                {
-                    sb.Append("&google_abuse=" + HttpUtility.UrlEncode(strCaptchaCookie, Encoding.UTF8));
-                }
-                if (cSafeSearch != SafeSearch.off)
-                    sb.Append("&safe=" + SafeSearchToString(cSafeSearch));
-                if (LocatedInRegion != Region.AnyRegion)
-                    sb.Append("&cr=" + RegionToHtmlOption(LocatedInRegion));
-                if (FirstSeen != FirstSeenGoogle.AnyTime)
-                    sb.Append("&as_qdr=" + FirstSeenToHtmlOption(FirstSeen));
-                if (WriteInLanguage != Language.AnyLanguage)
-                    sb.Append("&lr=" + LanguageToHtmlOption(WriteInLanguage));
-                
                 var intTimeOut = 5000 + 10000 * retries;
-                Error = false;
-                request = (HttpWebRequest)HttpWebRequest.Create(sb.ToString());
-                request.CachePolicy = policy;
+                error = false;
+                request = (HttpWebRequest)HttpWebRequest.Create(urlBuilder.ToString());
+                request.CachePolicy = new RequestCachePolicy(RequestCacheLevel.NoCacheNoStore);
                 request.Method = "GET";
                 request.Accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
                 request.KeepAlive = true;
 
                 if (!string.IsNullOrEmpty(UserAgent))
                     request.UserAgent = UserAgent;
-
-                if (!string.IsNullOrEmpty(strCaptchaCookie))
-                    request.Headers[HttpRequestHeader.Cookie] = strCaptchaCookie;
 
                 if (!string.IsNullOrEmpty(referer))
                     request.Referer = referer;
@@ -188,112 +82,44 @@ namespace FOCA.Searcher
 
                 try
                 {
-                    OnSearcherLogEvent(new EventsThreads.ThreadStringEventArgs(string.Format("[{0}] Requesting URL {1}", strName, request.RequestUri)));
+                    OnSearcherLogEvent(new EventsThreads.ThreadStringEventArgs(string.Format("[{0}] Requesting URL {1}", this.Name, request.RequestUri)));
+                    response = (HttpWebResponse)request.GetResponse();
 
-                    try
+                }
+                catch (WebException we)
+                {
+                    if (we.Response != null && we.Response is HttpWebResponse)
                     {
-                        response = (HttpWebResponse)request.GetResponse();
-                    }
-                    catch (WebException we)
-                    {
-                        var hwr = (HttpWebResponse)we.Response;
-                        if (hwr.StatusCode == HttpStatusCode.ServiceUnavailable)
+                        HttpWebResponse exceptionResponse = (HttpWebResponse)we.Response;
+                        //Too many request, reCaptcha
+                        if ((int)exceptionResponse.StatusCode == 429)
                         {
-
-                            referer = hwr.ResponseUri.AbsoluteUri;
-
-                            var srLector = new StreamReader(hwr.GetResponseStream(), Encoding.UTF8);
-                            var htmlCaptcha = srLector.ReadToEnd();
-                            srLector.Close();
-                            hwr.Close();
-
-                            Match m;
-                            var continuePagePattern = "name=\"continue\" value=\"(.*?)\"";
-                            m = Regex.Match(htmlCaptcha, continuePagePattern);
-                            var strContinuePage = m.Success ? HttpUtility.UrlEncode(m.Groups[1].Value.Replace("&amp;", "&"), Encoding.UTF8) : string.Empty;
-
-                            var captchaImgPattern = "/sorry/image(.*?)\"";
-                            m = Regex.Match(htmlCaptcha, captchaImgPattern);
-                            var captchaImg = m.Success ? m.Value.Substring(0, m.Value.Length - 1).Replace("&amp;", "&") : string.Empty;
-
-                            var captchaIDPattern = "id=(.*?)&";
-                            m = Regex.Match(captchaImg, captchaIDPattern);
-                            var captchaID = m.Success ? m.Groups[1].Value : string.Empty;
-
-                            var captchaQParameterPattern = "q=(.*?)&";
-                            m = Regex.Match(captchaImg, captchaQParameterPattern);
-                            var qParameter = m.Success ? m.Groups[1].Value : string.Empty;
-
-                            var captchaSolved = string.Empty;
-
-                            if (frmCaptcha == null)
-                                captchaSolved = ShowCaptcha(captchaImg);
-                            else
-                            {
-                                frmCaptcha.FormClosed += frmCaptcha_FormClosed;
-
-                                Error = true;
-                                do
-                                {
-                                    Thread.Sleep(500);
-                                } while (frmCaptcha != null);
-
-                                if (string.IsNullOrEmpty(captchaSolved))
-                                    Thread.CurrentThread.Abort();
-                                continue;
-                            }
-                            
-                            var url = ipv4Google + "/sorry/index";
-                            var strRequest = url + "?q=" + qParameter + "&hl=es&continue=" + strContinuePage + "&id=" + captchaID + "&captcha=" + captchaSolved + "&submit=Enviar";
-                            request = (HttpWebRequest)HttpWebRequest.Create(strRequest);
-                            request.CachePolicy = policy;
-                            if (!string.IsNullOrEmpty(UserAgent))
-                                request.UserAgent = UserAgent;
-                            var Cookie = strCaptchaCookie;
-                            request.UserAgent = "FOCA";
-                            request.Headers[HttpRequestHeader.Cookie] = Cookie;
-                            request.Headers[HttpRequestHeader.AcceptLanguage] = "es-ES,es;q=0.8,en-US;q=0.5,en;q=0.3";
-                            request.Headers[HttpRequestHeader.AcceptEncoding] = "gzip, deflate, br";
-                            request.Referer = referer;
-                            request.Accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
-                            request.KeepAlive = true;
-
-                            request.Timeout = intTimeOut;
-                            request.AllowAutoRedirect = false;
-                            response = (HttpWebResponse)request.GetResponse();
-
-                            if (response.StatusCode == HttpStatusCode.Found)
-                            {
-                                var newUrl = response.Headers["Location"];
-
-                                var nextURL = HttpUtility.UrlDecode(newUrl, Encoding.UTF8);
-                                var query = HttpUtility.ParseQueryString(nextURL);
-                                var googleAbuseParameters = query["google_abuse"].Split(';');
-
-                                foreach (var parameter in googleAbuseParameters.Where(parameter => parameter.StartsWith("GOOGLE_ABUSE_EXEMPTION")))
-                                {
-                                    strCaptchaCookie = parameter;
-                                }
-                            }
-
-                            Error = true;
+                            OnSearcherLogEvent(new EventsThreads.ThreadStringEventArgs("Too many requests to GoogleWeb engine. Please use the API instead."));
+                            retries = 3;
+                            throw;
+                        }
+                        else
+                        {
+                            OnSearcherLogEvent(new EventsThreads.ThreadStringEventArgs(string.Format("[{0}] Error {1} in request {2}", this.Name, retries, request.RequestUri.ToString())));
                         }
                     }
-                }
-                catch (WebException)
-                {
-                    Error = true;
+                    else
+                    {
+                        OnSearcherLogEvent(new EventsThreads.ThreadStringEventArgs(string.Format("[{0}] Error {1} in request {2}", this.Name, retries, request.RequestUri.ToString())));
+                    }
+                    error = true;
                     retries++;
-                    OnSearcherLogEvent(new EventsThreads.ThreadStringEventArgs(string.Format("[{0}] Error {1} in request {2}", strName, retries, request.RequestUri.ToString())));
                 }
-                catch
+                catch (Exception)
                 {
-                    Error = true;
+                    error = true;
                     retries++;
-                    OnSearcherLogEvent(new EventsThreads.ThreadStringEventArgs(string.Format("[{0}] Error {1} in request {2}", strName, retries, request.RequestUri.ToString())));
+                    OnSearcherLogEvent(new EventsThreads.ThreadStringEventArgs(string.Format("[{0}] Error {1} in request {2}", this.Name, retries, request.RequestUri.ToString())));
                 }
-            } while (Error && retries < 3);
-            if (Error || retries >= 3)
+                cancelToken.ThrowIfCancellationRequested();
+            } while (error && retries < 3);
+
+            if (error || retries >= 3)
                 throw new Exception(string.Format("[{0}] Error connecting", Name));
             string html = null;
             using (var lector = new StreamReader(response.GetResponseStream(), Encoding.UTF8))
@@ -301,134 +127,41 @@ namespace FOCA.Searcher
                 html = lector.ReadToEnd();
             }
             response.Close();
-            var patron = new Regex("<h3 class=\"r\"><\\s*a\\s+href=\\s*\"?([^\"]*)\"?\\s*", RegexOptions.IgnoreCase);
-            var lstCurrentResults = new List<object>();
-            foreach (Match m in patron.Matches(html))
+            HashSet<Uri> lstCurrentResults = new HashSet<Uri>();
+            foreach (Match m in googleWebUriRegex.Matches(html))
             {
-                string link = System.Web.HttpUtility.HtmlDecode(m.Result("$1"));
-                if (link.IndexOf("interstitial?url=") >= 0)
-                    link = link.Substring(link.IndexOf("interstitial?url=") + "interstitial?url=".Length, link.Length - link.IndexOf("interstitial?url=") - "interstitial?url=".Length);
-                if (link.IndexOf("/url?q=") >= 0)
-                {
-                    //Format: /url?q=http://page.com/linkfound.html&googleparameters&andmore=parameters
-                    if (link.IndexOf('&') > 0)
-                    {
-                        link = link.Substring(link.IndexOf("/url?q=") + "/url?q=".Length, link.IndexOf('&') - link.IndexOf("/url?q=") - "/url?q=".Length);
-                        link = (HttpUtility.UrlDecode(link));
-                    }
-                    else
-                    {
-                        link = link.Substring(link.IndexOf("/url?q=") + "/url?q=".Length, link.Length - link.IndexOf("/url?q=") - "/url?q=".Length);
-                        link = (HttpUtility.UrlDecode(link));
-                    }
-                }
-
+                string link = m.Groups["url"].Value;
                 if (link.Contains("%"))
                     link = (HttpUtility.UrlDecode(link));
-                lstCurrentResults.Add(link);
+                if (Uri.TryCreate(link, UriKind.Absolute, out Uri foundUri) && !foundUri.Host.Contains("google.com"))
+                {
+                    lstCurrentResults.Add(foundUri);
+                }
+                cancelToken.ThrowIfCancellationRequested();
             }
-            OnSearcherLogEvent(new EventsThreads.ThreadStringEventArgs(string.Format("[{0}] Found {1} links", strName, lstCurrentResults.Count)));
-            OnSearcherLinkFoundEvent(new EventsThreads.ThreadListDataFoundEventArgs(lstCurrentResults));
 
-            moreResults = html.ToLower().Contains("<span class=\"csb ch\" style=\"background-position:-96px 0;width:71px\"></span>".ToLower());
+            OnSearcherLogEvent(new EventsThreads.ThreadStringEventArgs(string.Format("[{0}] Found {1} links", this.Name, lstCurrentResults.Count)));
+            OnSearcherLinkFoundEvent(new EventsThreads.CollectionFound<Uri>(lstCurrentResults));
+
+            moreResults = html.Contains($"start={currentOffset + currentResultPerPage}&amp;");
 
             return lstCurrentResults.Count;
         }
 
-        /// <summary>
-        /// Get google links
-        /// </summary>
-        /// <param name="SearchString"></param>
-        /// <returns></returns>
-        private int GetGoogleLinks(string SearchString)
-        {
-            bool dummy;
-            return GetGoogleResults(SearchString, ResultsPerPage, Offset, out dummy);
-        }
-
-        /// <summary>
-        /// Get google all links
-        /// </summary>
-        /// <param name="SearchString"></param>
-        /// <returns></returns>
-        private int GetGoogleAllLinks(string SearchString)
+        private int GetGoogleAllLinks(string SearchString, CancellationToken cancelToken)
         {
             int totalResults = 0, currentPage = 0;
             bool moreResults;
             do
             {
-                totalResults += GetGoogleResults(SearchString, maxResultPerPage, currentPage * maxResultPerPage, out moreResults);
+                totalResults += GetGoogleResults(SearchString, MaxResultPerPage, currentPage * MaxResultPerPage, cancelToken, out moreResults);
                 currentPage++;
+                CancelToken.ThrowIfCancellationRequested();
             } while (moreResults);
             return totalResults;
         }
 
-        /// <summary>
-        /// Show captcha
-        /// </summary>
-        /// <param name="strURL"></param>
-        /// <returns></returns>
-        private string ShowCaptcha(string strURL)
-        {
-            var strCompleteUrl = ipv4Google + strURL;
-            frmCaptcha = new Form {ControlBox = false};
-            frmCaptcha.FormClosed += frmCaptcha_FormClosed;
-            var pcbCaptcha = new PictureBox();
-            var request = (HttpWebRequest)HttpWebRequest.Create(strCompleteUrl);
-            if (!string.IsNullOrEmpty(UserAgent))
-                request.UserAgent = UserAgent;
-            request.KeepAlive = true;
-            using (var response = (HttpWebResponse)request.GetResponse())
-            {
-                strCaptchaCookie = response.Headers[HttpResponseHeader.SetCookie];
-                pcbCaptcha.Image = System.Drawing.Image.FromStream(response.GetResponseStream());
-            }
-
-            pcbCaptcha.Top = 1;
-            pcbCaptcha.Left = 1;
-            pcbCaptcha.Height = pcbCaptcha.Image.Height;
-            pcbCaptcha.Width = pcbCaptcha.Image.Width;
-            frmCaptcha.Controls.Add(pcbCaptcha);
-            Label lblResolv = new Label();
-            lblResolv.Text = "Write the Captcha, and press enter:";
-            lblResolv.Top = pcbCaptcha.Height + 5;
-            frmCaptcha.Controls.Add(lblResolv);
-            TextBox txtCaptcha = new TextBox();
-            txtCaptcha.Top = lblResolv.Top + lblResolv.Height;
-            txtCaptcha.Width = 196;
-            txtCaptcha.Left = 3;
-            txtCaptcha.KeyPress += txtCaptcha_KeyPress;
-            frmCaptcha.Controls.Add(txtCaptcha);
-            frmCaptcha.FormBorderStyle = FormBorderStyle.FixedSingle;
-            frmCaptcha.Width = 208;
-            frmCaptcha.Height = 150;
-            frmCaptcha.Text = "Resolve the Captcha";
-            frmCaptcha.StartPosition = FormStartPosition.CenterParent;
-            frmCaptcha.ShowDialog();
-            return txtCaptcha.Text;
-        }
-
-        void frmCaptcha_FormClosed(object sender, FormClosedEventArgs e)
-        {
-            if (frmCaptcha.DialogResult == DialogResult.Cancel)
-                System.Threading.Thread.CurrentThread.Abort();
-            frmCaptcha = null;
-        }
-
-        private void txtCaptcha_KeyPress(object sender, KeyPressEventArgs e)
-        {
-            if (e.KeyChar == Convert.ToChar(Keys.Enter))
-            {
-                frmCaptcha.DialogResult = DialogResult.OK;
-            }
-        }
-
-        /// <summary>
-        /// Return region to Html.
-        /// </summary>
-        /// <param name="r"></param>
-        /// <returns></returns>
-        public string RegionToHtmlOption(Region r)
+        private string RegionToHtmlOption(Region r)
         {
             switch (r)
             {
@@ -676,12 +409,7 @@ namespace FOCA.Searcher
             }
         }
 
-        /// <summary>
-        /// return language to Html.
-        /// </summary>
-        /// <param name="l"></param>
-        /// <returns></returns>
-        public string LanguageToHtmlOption(Language l)
+        private string LanguageToHtmlOption(Language l)
         {
             switch (l)
             {
@@ -734,12 +462,7 @@ namespace FOCA.Searcher
             }
         }
 
-        /// <summary>
-        /// Return firts seen to html.
-        /// </summary>
-        /// <param name="f"></param>
-        /// <returns></returns>
-        public string FirstSeenToHtmlOption(FirstSeenGoogle f)
+        private string FirstSeenToHtmlOption(FirstSeenGoogle f)
         {
             switch (f)
             {
@@ -751,12 +474,7 @@ namespace FOCA.Searcher
             }
         }
 
-        /// <summary>
-        /// Safe search to string.
-        /// </summary>
-        /// <param name="s"></param>
-        /// <returns></returns>
-        public string SafeSearchToString(SafeSearch s)
+        private string SafeSearchToString(SafeSearch s)
         {
             switch (s)
             {

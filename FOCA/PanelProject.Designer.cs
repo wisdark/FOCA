@@ -245,7 +245,7 @@ namespace FOCA
             this.lblDocumentFolder.Name = "lblDocumentFolder";
             this.lblDocumentFolder.Size = new System.Drawing.Size(221, 20);
             this.lblDocumentFolder.TabIndex = 67;
-            this.lblDocumentFolder.Text = "Folder where save documents";
+            this.lblDocumentFolder.Text = "Folder where to save documents";
             // 
             // txtFolderDocuments
             // 
@@ -325,7 +325,7 @@ namespace FOCA
             // 
             // fbdMain
             // 
-            this.fbdMain.Description = "Selecciona la carpeta donde están los documentos de OpenOffice";
+            this.fbdMain.Description = "Select the folder that contains the OpenOffice files";
             // 
             // errorPorject
             // 

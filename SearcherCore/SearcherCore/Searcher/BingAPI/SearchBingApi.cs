@@ -1,94 +1,55 @@
-﻿using System;
+﻿using Newtonsoft.Json.Linq;
+using RestSharp;
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using Newtonsoft.Json.Linq;
-using RestSharp;
+using System.Threading;
 
 namespace SearcherCore.Searcher.BingAPI
 {
-    /// <summary>
-    ///     BingApiResults encapsulates the fields of each result
-    ///     that FOCA may use
-    /// </summary>
-    public class BingApiResult
-    {
-        public BingApiResult(string url, string title, string description)
-        {
-            Url = url;
-            Title = title;
-            Description = description;
-        }
-
-        public string Url { get; set; }
-        public string Title { get; set; }
-        public string Description { get; set; }
-    }
-
     public class SearchBingApi
     {
-        public delegate void StatusUpdateHandler(object sender, string e);
-
         private readonly string _secretKey;
         private readonly RestClient client;
+        private const int ResultCountPerPage = 50;
 
         public SearchBingApi(string secretKey)
         {
-            // V5.0 of the API
-            client = new RestClient("https://api.cognitive.microsoft.com/bing/v5.0");
+            // V7.0 of the API
+            client = new RestClient("https://api.cognitive.microsoft.com/bing/v7.0");
             // secret key to authenticate requests
             _secretKey = secretKey;
         }
 
-        public event StatusUpdateHandler SearcherLinkFoundEvent;
-
-        /// <summary>
-        /// Query Bing API
-        /// </summary>
-        /// <param name="q">query</param>
-        /// <returns></returns>
-        public List<BingApiResult> Search(string q)
+        public List<Uri> Search(string q, int pageNumber, CancellationToken cancelToken, out bool moreResults)
         {
-            var results = new List<BingApiResult>();
-            var offset = 0;
-            // URL of the requests. Count = 50 because it's the max allowed value
-            var request = new RestRequest($"search?count=50&safeSearch=Off&textFormat=Raw&offset={offset}&q={q}",
-                Method.GET);
+            List<Uri> results = new List<Uri>();
+            int currentOffset = ResultCountPerPage * pageNumber;
+            RestRequest request = new RestRequest($"search?count={ResultCountPerPage}&safeSearch=Off&textFormat=Raw&offset={currentOffset}&q={q}", Method.GET);
             // Request header which sends the private key to the server
             request.AddHeader("Ocp-Apim-Subscription-Key", _secretKey);
-            var queryResult = client.Execute<List<string>>(request).Data[0];
-            JToken token = JObject.Parse(queryResult);
-
-            try
+            IRestResponse<List<string>> queryResult = client.ExecuteTaskAsync<List<string>>(request, cancelToken).Result;
+            if (queryResult.StatusCode == System.Net.HttpStatusCode.OK)
             {
-                do
+                JToken token = JObject.Parse(queryResult.Data[0]);
+
+                var webpages = (JArray)token["webPages"]["value"];
+                foreach (string foundUrl in webpages.Select(link => ((string)link.SelectToken("url"))))
                 {
-                    var webpages = (JArray) token["webPages"]["value"];
-                    results.AddRange(
-                        webpages.Select(
-                            res =>
-                                new BingApiResult((string) res.SelectToken("displayUrl"),
-                                    (string) res.SelectToken("name"), (string) res.SelectToken("snippet"))));
-                    foreach (
-                        var b in
-                            webpages.Select(
-                                link => new BingApiResult((string) link.SelectToken("displayUrl"), "", "")))
+                    if (Uri.TryCreate(foundUrl, UriKind.Absolute, out Uri url))
                     {
-                        UpdateStatus(b.Url);
+                        results.Add(url);
                     }
-                    offset += 50;
-                } while (offset < (int) token.SelectToken("webPages").SelectToken("totalEstimatedMatches")/1000);
+                    currentOffset++;
+                }
+
+                moreResults = ((int)token.SelectToken("webPages").SelectToken("totalEstimatedMatches")) > currentOffset;
+                return results;
             }
-            catch
+            else
             {
-                throw new Exception("Error while trying to get results");
+                throw new InvalidOperationException($"The request could not be completed. Please check your API key. Response status: {queryResult.StatusDescription}");
             }
-
-            return results;
-        }
-
-        private void UpdateStatus(string status)
-        {
-            SearcherLinkFoundEvent?.Invoke(this, status);
         }
     }
 }

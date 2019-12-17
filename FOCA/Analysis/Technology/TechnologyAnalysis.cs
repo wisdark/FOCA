@@ -1,9 +1,9 @@
+using FOCA.Database.Entities;
+using FOCA.Threads;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading;
-using FOCA.Threads;
 
 namespace FOCA.Analysis.Technology
 {
@@ -38,7 +38,8 @@ namespace FOCA.Analysis.Technology
     [Serializable]
     public class TechnologyAnalysis
     {
-        public List<Technology> listaTech = null;
+        public List<Technology> SelectedTechnologies { get; private set; }
+
         [NonSerialized]
         private FOCA.Searcher.GoogleWebSearcher wsSearch;
         private static string source = "TechnologyRecognition";
@@ -55,18 +56,12 @@ namespace FOCA.Analysis.Technology
 
         private void LoadNewTechList()
         {
-            wsSearch = new FOCA.Searcher.GoogleWebSearcher();
-            listaTech = new List<Technology>();
+            this.SelectedTechnologies = new List<Technology>();
             foreach (string extension in Program.cfgCurrent.SelectedTechExtensions)
-                listaTech.Add(new Technology(extension));
+                this.SelectedTechnologies.Add(new Technology(extension));
         }
 
-        public List<Technology> GetListTech()
-        {
-            return listaTech;
-        }
-
-        public void DetailledSearch(DomainsItem domain)
+        public void DetailedSearch(DomainsItem domain)
         {
             this.domain = domain.Domain;
             StartSearch(domain);
@@ -77,53 +72,43 @@ namespace FOCA.Analysis.Technology
             LoadNewTechList();
 
             wsSearch = new FOCA.Searcher.GoogleWebSearcher();
-            wsSearch.SearchAll = true;
-            wsSearch.Site = domain.Domain;
-            wsSearch.SearcherLinkFoundEvent += new EventHandler<EventsThreads.ThreadListDataFoundEventArgs>(eventLinkFoundDetailed);
-            wsSearch.SearcherEndEvent += new EventHandler<EventsThreads.ThreadEndEventArgs>(EndSearch);
-            foreach (Technology tech in listaTech)
-                wsSearch.AddExtension(tech.extension);
+            wsSearch.ItemsFoundEvent += new EventHandler<EventsThreads.CollectionFound<Uri>>(eventLinkFoundDetailed);
             Program.LogThis(new Log(Log.ModuleType.TechnologyRecognition, "Starting technology recognition in " + domain.Domain, Log.LogType.debug));
-            wsSearch.GetLinks();
+            wsSearch.SearchBySite(new CancellationTokenSource(), domain.Domain, this.SelectedTechnologies.Select(p => p.extension).ToArray())
+                .ContinueWith((e) =>
+                {
+                    Program.LogThis(new Log(Log.ModuleType.TechnologyRecognition, "Finishing technology recognition in " + domain, Log.LogType.debug));
+                    if (this.EndAnalysis != null)
+                        EndAnalysis(domain, null);
+                });
         }
 
-        public void eventLinkFoundDetailed(object sender, FOCA.Threads.EventsThreads.ThreadListDataFoundEventArgs e)
+        public void eventLinkFoundDetailed(object sender, FOCA.Threads.EventsThreads.CollectionFound<Uri> e)
         {
-            for (int i = 0; i < e.Data.Count; i++)
+            foreach (Uri url in e.Data)
             {
-                string url = e.Data[i].ToString();
-                Uri uri = new Uri(url);
-                uri = new Uri(uri.Scheme + "://" + uri.Host + uri.AbsolutePath);
-
                 if (LinkFound != null)
-                    LinkFound(uri.ToString(), null);
+                    LinkFound(url.ToString(), null);
 
                 /*  Este if, newdomain=null se da cuando por ejemplo se hace una busqueda de tecnologia
                  *  sobre DOMINIO.COM y aparecen resultados de subdominio1.DOMINO.COM... Así que se agrega
                  *  subdominio1.DOMINIO.com y se le agregan las URLs y tecnologias que se han encontrado
                  */
-                DomainsItem NewDomain = Program.data.GetDomain(uri.Host);
+                DomainsItem NewDomain = Program.data.GetDomain(url.Host);
                 if (NewDomain == null)
                 {
-                    Program.data.AddDomain(uri.Host, source, Program.cfgCurrent.MaxRecursion, Program.cfgCurrent);
-                    Program.LogThis(new Log(Log.ModuleType.TechnologyRecognition, "Domain found: " + uri.Host, Log.LogType.medium));
-                    NewDomain = Program.data.GetDomain(uri.Host);
-                    NewDomain.map.AddUrl(uri.ToString());
+                    Program.data.AddDomain(url.Host, source, Program.cfgCurrent.MaxRecursion, Program.cfgCurrent);
+                    Program.LogThis(new Log(Log.ModuleType.TechnologyRecognition, "Domain found: " + url.Host, Log.LogType.medium));
+                    NewDomain = Program.data.GetDomain(url.Host);
+                    NewDomain.map.AddUrl(url.ToString());
 
                 }
                 /* Si el dominio de la URL coincide con el dominio que se esta tratando, se agrega y se extraen los directorio */
-                else if (uri.Host == this.domain)
+                else if (url.Host == this.domain)
                 {
-                    Program.data.GetDomain(domain).map.AddUrl(uri.ToString());
+                    Program.data.GetDomain(domain).map.AddUrl(url.ToString());
                 }
             }
-        }
-
-        private void EndSearch(object sender, FOCA.Threads.EventsThreads.ThreadEndEventArgs e)
-        {
-            Program.LogThis(new Log(Log.ModuleType.TechnologyRecognition, "Finishing technology recognition in " + domain + ". Reason: " + e.EndReason.ToString(), Log.LogType.debug));
-            if (this.EndAnalysis != null)
-                EndAnalysis(domain, null);
         }
     }
 }

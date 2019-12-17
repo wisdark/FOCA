@@ -1,3 +1,4 @@
+using FOCA.Database.Entities;
 using System;
 using System.Linq;
 using System.Threading;
@@ -47,7 +48,9 @@ namespace FOCA
                     return;
                 }
 
-                if (Program.data.GetIp(strIp) == null)
+
+                IPsItem ip = Program.data.GetIp(strIp);
+                if (ip == null || String.IsNullOrWhiteSpace(ip.Ip))
                 {
                     var t = new Thread(AddIp);
                     t.Start();
@@ -73,9 +76,9 @@ namespace FOCA
         {
             Program.data.AddIP(strIp, "Manually added IP", Program.cfgCurrent.MaxRecursion);
 
-            var hayRelacciones = Program.data.relations.Items.Any(R => R.Ip != null && R.Ip.Ip == strIp);
+            var anyRelations = Program.data.relations.Items.Any(R => R.Ip != null && R.Ip.Ip == strIp);
 
-            if (hayRelacciones) return;
+            if (anyRelations) return;
             var ipItem = Program.data.GetIp(strIp);
             var computerItem = new ComputersItem
             {
@@ -85,6 +88,11 @@ namespace FOCA
             };
             Program.data.computers.Items.Add(computerItem);
             Program.data.computerIPs.Items.Add(new ComputerIPsItem(computerItem, ipItem, "Manually added IP"));
+        }
+
+        private void FormAddIp_Load(object sender, EventArgs e)
+        {
+
         }
     }
 }

@@ -1,3 +1,10 @@
+﻿using FOCA.Analysis.FingerPrinting;
+using FOCA.Analysis.Technology;
+using FOCA.Database.Entities;
+using FOCA.ModifiedComponents;
+using FOCA.TaskManager;
+using MetadataExtractCore.Diagrams;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -6,18 +13,11 @@ using System.Net;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Web;
-using FOCA.Analysis.FingerPrinting;
-using FOCA.Analysis.Technology;
-using FOCA.ModifiedComponents;
-using FOCA.Net;
-using FOCA.TaskManager;
-using MetadataExtractCore.Diagrams;
-using Newtonsoft.Json;
 
 namespace FOCA.Analysis.HttpMap
 {
     /// <summary>
-    ///     Generate a MAP of Folders/Files and possible backup/oldversions of Files
+    ///     Generate a MAP of Folders/Files and possible backup/old versions of Files
     /// </summary>
     [Serializable]
     public class HttpMap : IDisposable
@@ -33,23 +33,11 @@ namespace FOCA.Analysis.HttpMap
         [JsonIgnore]
         public int Id { get; set; }
 
-        public ThreadSafeList<HttpMapTypesFiles> HttpMapTypesFiles { get; set; }
-
         /// <summary>
         ///     Modified filenames for backup files search actions
         /// </summary>
         [JsonIgnore]
         public ThreadSafeList<string> BackupModifiedFilenames { get; set; }
-
-        /// <summary>
-        /// Modified filenames for backup files search actions
-        /// </summary>
-        public ThreadSafeList<string> Pathfilenames { get; set; } = new ThreadSafeList<string>();
-
-        /// <summary>
-        ///     Backup Files found
-        /// </summary>
-        public ThreadSafeList<BackUpFile> Backups { get; set; }
 
         /// <summary>
         ///     Documents found
@@ -67,27 +55,6 @@ namespace FOCA.Analysis.HttpMap
         public ThreadSafeList<string> Folders { get; set; }
 
         /// <summary>
-        ///     List of directories with insecure methods enabled
-        /// </summary>
-        public ThreadSafeList<FuzzMethodFolderObject> InsecureMethodFoldersFound;
-
-        /// <summary>
-        ///     List of directories where a public .listing file was found
-        /// </summary>
-        public ThreadSafeList<string> ListingFilesFound;
-
-        /// <summary>
-        ///     List of directories where the .listing file has already been tested
-        /// </summary>
-        [JsonIgnore]
-        public ThreadSafeList<string> ListingFilesTest;
-
-        /// <summary>
-        ///     List of open directories
-        /// </summary>
-        public ThreadSafeList<FuzzOpenFolderObject> OpenFoldersFound;
-
-        /// <summary>
         ///     List of endpoints where parameters were found
         /// </summary>
         public ThreadSafeList<string> Parametrized { get; set; }
@@ -96,11 +63,6 @@ namespace FOCA.Analysis.HttpMap
         ///     All links search status
         /// </summary>
         public SearchStatus SearchingAllLinks;
-
-        /// <summary>
-        ///     Backups search status
-        /// </summary>
-        public SearchStatus SearchingBackUps;
 
         /// <summary>
         ///     Insecure methods search status
@@ -127,18 +89,12 @@ namespace FOCA.Analysis.HttpMap
         /// </summary>
         public HttpMap()
         {
-            Backups = new ThreadSafeList<BackUpFile>();
             Documents = new ThreadSafeList<string>();
             Files = new ThreadSafeList<string>();
             BackupModifiedFilenames = new ThreadSafeList<string>();
             Folders = new ThreadSafeList<string>();
-            InsecureMethodFoldersFound = new ThreadSafeList<FuzzMethodFolderObject>();
-            ListingFilesFound = new ThreadSafeList<string>();
-            ListingFilesTest = new ThreadSafeList<string>();
-            OpenFoldersFound = new ThreadSafeList<FuzzOpenFolderObject>();
             Parametrized = new ThreadSafeList<string>();
 
-            SearchingBackUps = SearchStatus.NotInitialized;
             SearchingAllLinks = SearchStatus.NotInitialized;
             SearchingMethods = SearchStatus.NotInitialized;
             SearchingOpenFolders = SearchStatus.NotInitialized;
@@ -162,36 +118,51 @@ namespace FOCA.Analysis.HttpMap
                     return;
                 domain.robotsAnalyzed = true;
 
-                var r = new Request();
                 var protocol = ((port == 443) ? "https://" : "http://");
 
-                var robotspath = protocol + host + ":" + port + "/robots.txt";
-                int respCode;
-                var sRobots = r.DoGet(robotspath, out respCode);
+                string robotspath = protocol + host + ":" + port + "/robots.txt";
+                string sRobots = String.Empty;
 
-                if (respCode != 200)
-                    return;
-
-                var sr = new StringReader(sRobots);
-                string line;
-                while ((line = sr.ReadLine()) != null)
+                try
                 {
-                    if (line.Split(' ').Count() <= 1)
-                        continue;
-                    var path = line.Split(' ')[1];
-                    if (path.Contains("*"))
-                        continue;
-                    path = path.Replace("$", "");
+                    HttpWebRequest robotsRequest = HttpWebRequest.CreateHttp(robotspath);
+                    robotsRequest.AllowAutoRedirect = false;
+                    using (HttpWebResponse response = (HttpWebResponse)robotsRequest.GetResponse())
+                    {
+                        if (response.StatusCode != HttpStatusCode.OK)
+                            return;
 
-                    if (!path.StartsWith("/"))
-                        continue;
-                    var url = protocol + host + path;
-                    Program.LogThis(new Log(Log.ModuleType.Fuzzer,
-                        "[robots.txt] File found on " + robotspath + ": " + url,
-                        Log.LogType.medium));
-                    domain.map.AddUrl(url);
+                        using (var reader = new StreamReader(response.GetResponseStream()))
+                        {
+                            sRobots = reader.ReadToEnd();
+                        }
+                    }
                 }
-                sr.Close();
+                catch (Exception)
+                {
+                }
+
+                using (var sr = new StringReader(sRobots))
+                {
+                    string line;
+                    while ((line = sr.ReadLine()) != null)
+                    {
+                        if (line.Split(' ').Length <= 1)
+                            continue;
+                        var path = line.Split(' ')[1];
+                        if (path.Contains("*"))
+                            continue;
+                        path = path.Replace("$", "");
+
+                        if (!path.StartsWith("/"))
+                            continue;
+                        var url = protocol + host + path;
+                        Program.LogThis(new Log(Log.ModuleType.Fuzzer,
+                            "[robots.txt] File found on " + robotspath + ": " + url,
+                            Log.LogType.medium));
+                        domain.map.AddUrl(url);
+                    }
+                }
             }
             catch (Exception)
             {
@@ -230,7 +201,7 @@ namespace FOCA.Analysis.HttpMap
                         domain.techAnalysis = new TechnologyAnalysis();
 
                     var extension = uri.AbsolutePath.Split('.').Last();
-                    foreach (var tech in from tech in domain.techAnalysis.listaTech
+                    foreach (var tech in from tech in domain.techAnalysis.SelectedTechnologies
                                          where tech.extension == extension
                                          let exists = tech.GetURLs().Any(urlOfTech => uri.ToString() == urlOfTech)
                                          where !exists
@@ -249,26 +220,6 @@ namespace FOCA.Analysis.HttpMap
             object[] oUrl = { new object[] { url } };
             tPluginOnNewUrl.Start(oUrl);
 #endif
-        }
-
-        /// <summary>
-        ///     Add URL to the listing record
-        /// </summary>
-        /// <param name="url"></param>
-        public void AddFileListingTest(string url)
-        {
-            if (!ListingFilesTest.Contains(url))
-                ListingFilesTest.Add(url);
-        }
-
-        /// <summary>
-        ///     Add a backup file if it doesn't exist
-        /// </summary>
-        /// <param name="backupFile"></param>
-        public void AddBackUp(BackUpFile backupFile)
-        {
-            if (!ExistBackUp(backupFile))
-                Backups.Add(backupFile);
         }
 
         /// <summary>
@@ -414,7 +365,7 @@ namespace FOCA.Analysis.HttpMap
         }
 
         /// <summary>
-        ///     Returns a URLs list for the ackups search action
+        ///     Returns a URLs list for the backups search action
         /// </summary>
         /// <param name="urls"></param>
         /// <returns></returns>
@@ -422,33 +373,43 @@ namespace FOCA.Analysis.HttpMap
         {
             var allUrls = new ThreadSafeList<string>();
 
-            var mutexfolders = _ExtractFoldersRuntime(urls);
-            foreach (var url in urls)
+            try
             {
-                var uri = new Uri(url);
-                var file = Path.GetFileName(uri.LocalPath);
-                var fileName = Path.GetFileNameWithoutExtension(file);
-                var fileExtension = Path.GetExtension(file);
-                var path = uri.AbsoluteUri;
-
-                if (uri.AbsoluteUri.IndexOf(file, StringComparison.Ordinal) > 0)
-                    path = path.Remove(uri.AbsoluteUri.IndexOf(file, StringComparison.Ordinal));
-
-                var mutex = _MutexFileRuntime(path, HttpUtility.UrlEncode(fileName),
-                    HttpUtility.UrlEncode(fileExtension));
-
-                if (mutex == null)
-                    return allUrls;
-
-                foreach (var mutexUrl in mutex)
+                var mutexfolders = _ExtractFoldersRuntime(urls);
+                foreach (var url in urls)
                 {
-                    allUrls.Add(mutexUrl);
+                    if (!String.IsNullOrWhiteSpace(url))
+                    {
+                        var uri = new Uri(url);
+                        var file = System.IO.Path.GetFileName(uri.LocalPath);
+                        var fileName = System.IO.Path.GetFileNameWithoutExtension(file);
+                        var fileExtension = System.IO.Path.GetExtension(file);
+                        var path = uri.AbsoluteUri;
+
+                        if (uri.AbsoluteUri.IndexOf(file, StringComparison.Ordinal) > 0)
+                            path = path.Remove(uri.AbsoluteUri.IndexOf(file, StringComparison.Ordinal));
+
+                        var mutex = _MutexFileRuntime(path, HttpUtility.UrlEncode(fileName),
+                            HttpUtility.UrlEncode(fileExtension));
+
+                        if (mutex == null)
+                            return allUrls;
+
+                        foreach (var mutexUrl in mutex)
+                        {
+                            allUrls.Add(mutexUrl);
+                        }
+                    }
+                }
+
+                foreach (var mutexFolder in mutexfolders)
+                {
+                    allUrls.Add(mutexFolder);
                 }
             }
-
-            foreach (var folderMuteado in mutexfolders)
+            catch (Exception)
             {
-                allUrls.Add(folderMuteado);
+
             }
 
             return allUrls;
@@ -465,7 +426,7 @@ namespace FOCA.Analysis.HttpMap
         {
             var lstFiles = new ThreadSafeList<string>();
 
-            // ToDo use a list providad by the user
+            // ToDo use a list provided by the user
             string[] backupExt = { "old", "bak", "back", "1", "2", "txt", "~", "save", "backup" };
             string[] oldVersions = { "1", "2", "_1", "_2", "_backup" };
 
@@ -473,7 +434,7 @@ namespace FOCA.Analysis.HttpMap
 
             foreach (var newFile in (from newExt in backupExt.Concat(oldVersions)
                                      let aux = path.Split(new[] { "/" }, StringSplitOptions.None)
-                                     let realPath = string.Join("/", aux.Take(aux.Count() - 1)) + "/"
+                                     let realPath = string.Join("/", aux.Take(aux.Length - 1)) + "/"
                                      select (string.Equals(newExt, "~"))
                                          ? realPath + fileName + "." + fileExtension + newExt
                                          : realPath + fileName + "." + fileExtension + "." + newExt).Where(
@@ -495,55 +456,66 @@ namespace FOCA.Analysis.HttpMap
             var folders = new ThreadSafeList<string>();
             var foldersBackups = new ThreadSafeList<string>();
 
-            foreach (var url in lsturls)
+            try
             {
-                var u = new Uri(url);
-                if (u.ToString().EndsWith("//"))
+                foreach (var url in lsturls)
                 {
-                    var auxSingleUrl = new ThreadSafeList<string> { u.ToString().Remove(u.ToString().Length - 1, 1) };
-                    return _ExtractFoldersRuntime(auxSingleUrl);
-                }
-
-                var offSetProtocol = url.IndexOf("://", StringComparison.Ordinal);
-                var protocol = url.Substring(0, offSetProtocol);
-
-                var foldersSplit = u.AbsolutePath.Split('/');
-                var path = string.Empty;
-
-                for (var i = 0; i < foldersSplit.Length; i++)
-                {
-                    if (i + 1 != foldersSplit.Length)
-                        path += foldersSplit[i] + "/";
-                    if (folders.Contains(protocol + "://" + u.Host + path) || path.Contains("."))
-                        continue;
-                    folders.Add(protocol + "://" + u.Host + path);
-
-                    // ToDo use a list provided by the user
-                    string[] compressExt = { ".zip", ".rar", ".tar", ".gz", ".tar.gz" };
-                    var path1 = path;
-                    foreach (
-                        var extension in
-                            compressExt.Where(
-                                extension =>
-                                    protocol + "://" + u.Host + path1.Substring(0, path1.Length - 1) !=
-                                    protocol + "://" + u.Host)
-                                .Where(
-                                    extension =>
-                                        !foldersBackups.Contains(protocol + "://" + u.Host +
-                                                                 path1.Substring(0, path1.Length - 1) +
-                                                                 extension)))
+                    if (!String.IsNullOrWhiteSpace(url))
                     {
-                        foldersBackups.Add(protocol + "://" + u.Host + path.Substring(0, path.Length - 1) +
-                                           extension);
+
+                        var u = new Uri(url);
+                        if (u.ToString().EndsWith("//"))
+                        {
+                            var auxSingleUrl = new ThreadSafeList<string> { u.ToString().Remove(u.ToString().Length - 1, 1) };
+                            return _ExtractFoldersRuntime(auxSingleUrl);
+                        }
+
+                        var offSetProtocol = url.IndexOf("://", StringComparison.Ordinal);
+                        var protocol = url.Substring(0, offSetProtocol);
+
+                        var foldersSplit = u.AbsolutePath.Split('/');
+                        var path = string.Empty;
+
+                        for (var i = 0; i < foldersSplit.Length; i++)
+                        {
+                            if (i + 1 != foldersSplit.Length)
+                                path += foldersSplit[i] + "/";
+                            if (folders.Contains(protocol + "://" + u.Host + path) || path.Contains("."))
+                                continue;
+                            folders.Add(protocol + "://" + u.Host + path);
+
+                            // ToDo use a list provided by the user
+                            string[] compressExt = { ".zip", ".rar", ".tar", ".gz", ".tar.gz" };
+                            var path1 = path;
+                            foreach (
+                                var extension in
+                                    compressExt.Where(
+                                        extension =>
+                                            protocol + "://" + u.Host + path1.Substring(0, path1.Length - 1) !=
+                                            protocol + "://" + u.Host)
+                                        .Where(
+                                            extension =>
+                                                !foldersBackups.Contains(protocol + "://" + u.Host +
+                                                                         path1.Substring(0, path1.Length - 1) +
+                                                                         extension)))
+                            {
+                                foldersBackups.Add(protocol + "://" + u.Host + path.Substring(0, path.Length - 1) +
+                                                   extension);
+                            }
+                        }
                     }
                 }
+            }
+            catch (Exception)
+            {
+
             }
 
             return foldersBackups;
         }
 
         /// <summary>
-        /// Extract folders from a given url
+        /// Extract folders from a given URL
         /// </summary>
         /// <param name="url"></param>
         private void ExtractFolders(string url)
@@ -602,16 +574,6 @@ namespace FOCA.Analysis.HttpMap
         }
 
         /// <summary>
-        /// Check if a backup file was already added to the project
-        /// </summary>
-        /// <param name="backUpFile"></param>
-        /// <returns></returns>
-        private bool ExistBackUp(BackUpFile backUpFile)
-        {
-            return Backups.Any(b => b.Url.Equals(backUpFile.Url));
-        }
-
-        /// <summary>
         /// Check if a file already exists in the project
         /// </summary>
         /// <param name="url"></param>
@@ -666,11 +628,6 @@ namespace FOCA.Analysis.HttpMap
                     Documents.Dispose();
                     Folders.Dispose();
                     Parametrized.Dispose();
-                    ListingFilesTest.Dispose();
-                    ListingFilesFound.Dispose();
-                    Backups.Dispose();
-                    OpenFoldersFound.Dispose();
-                    InsecureMethodFoldersFound.Dispose();
                 }
 
                 Files = null;
@@ -678,11 +635,6 @@ namespace FOCA.Analysis.HttpMap
                 Documents = null;
                 Folders = null;
                 Parametrized = null;
-                ListingFilesTest = null;
-                ListingFilesFound = null;
-                Backups = null;
-                OpenFoldersFound = null;
-                InsecureMethodFoldersFound = null;
 
                 _disposedValue = true;
             }
@@ -694,17 +646,5 @@ namespace FOCA.Analysis.HttpMap
         }
 
         #endregion
-    }
-
-    public struct BackUpFile
-    {
-        public HttpStatusCode Code;
-        public string Url;
-
-        public BackUpFile(string url, HttpStatusCode code)
-        {
-            Url = url;
-            Code = code;
-        }
     }
 }

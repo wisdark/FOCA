@@ -1,40 +1,31 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.IO;
-using System.Text.RegularExpressions;
-using MetadataExtractCore.Utilities;
 using MetadataExtractCore.Analysis;
 using MetadataExtractCore.Diagrams;
+using MetadataExtractCore.Utilities;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
 
-namespace MetadataExtractCore.Metadata
+namespace MetadataExtractCore.Extractors
 {
-    [Serializable]
-    public class Office972003 : MetaExtractor
+    public class Office972003 : DocumentExtractor
     {
-        public SerializableDictionary<string, EXIFDocument> dicPictureEXIF { get; set; }
-
-        public Office972003()
+        public Office972003(Stream stm) : base(stm)
         {
-            dicPictureEXIF = new SerializableDictionary<string, EXIFDocument>();
         }
 
-        public Office972003(Stream stm): this()
-        {
-            this.stm = new MemoryStream();
-            Functions.CopyStream(stm, this.stm);
-        }
-
-        public override void analyzeFile()
+        public override FileMetadata AnalyzeFile()
         {
             OleDocument doc = null;
+            this.foundMetadata = new FileMetadata();
             try
             {
-                doc = new OleDocument(stm);
+                doc = new OleDocument(this.fileStream);
                 if (!doc.isValid())
                 {
-                    return;
+                    return this.foundMetadata;
                 }
                 ReadDocument(doc);
 
@@ -62,13 +53,14 @@ namespace MetadataExtractCore.Metadata
             catch (Exception e)
             {
                 System.Diagnostics.Debug.WriteLine(e.ToString());
-                return;
+                return this.foundMetadata;
             }
             finally
             {
                 if (doc != null)
                     doc.Close();
             }
+            return this.foundMetadata;
         }
 
         private void ReadDocument(OleDocument doc)
@@ -87,7 +79,7 @@ namespace MetadataExtractCore.Metadata
                 {
                     SummaryInformation.Seek(0, SeekOrigin.Begin);
                     OleStream os = new OleStream(SummaryInformation);
-                    os.GetMetadata(FoundMetaData, FoundUsers, FoundDates, FoundEmails);
+                    os.GetMetadata(this.foundMetadata);
                 }
             }
             using (Stream DocumentSummaryInformation = doc.OpenStream("DocumentSummaryInformation"))
@@ -96,22 +88,21 @@ namespace MetadataExtractCore.Metadata
                 {
                     DocumentSummaryInformation.Seek(0, SeekOrigin.Begin);
                     OleStream os = new OleStream(DocumentSummaryInformation);
-                    os.GetMetadata(FoundMetaData, FoundUsers, FoundDates, FoundEmails);
+                    os.GetMetadata(this.foundMetadata);
                 }
             }
         }
 
         private void AnalizarTitulo()
         {
-            if (FoundMetaData.Title != null)
-                FoundPaths.AddUniqueItem(PathAnalysis.CleanPath(FoundMetaData.Title), true);
+            if (this.foundMetadata.Title != null)
+                this.foundMetadata.Add(new Diagrams.Path(PathAnalysis.CleanPath(this.foundMetadata.Title), true));
         }
 
         private void AnalizarPlantilla()
         {
-
-            if (FoundMetaData.Template != null && FoundMetaData.Template.Trim().Length > 1)
-                FoundPaths.AddUniqueItem(PathAnalysis.CleanPath(FoundMetaData.Template), false);
+            if (this.foundMetadata.Template != null && this.foundMetadata.Template.Trim().Length > 1)
+                this.foundMetadata.Add(new Diagrams.Path(PathAnalysis.CleanPath(this.foundMetadata.Template), false));
         }
 
         private void GetPrinters(OleDocument doc)
@@ -129,11 +120,14 @@ namespace MetadataExtractCore.Metadata
                 if (tam > 0)
                 {
                     Stream table = doc.OpenStream((tipo & 2) == 2 ? "1Table" : "0Table");
-                    Byte[] DriverImpresora = new Byte[tam];
-                    table.Seek(dir, SeekOrigin.Begin);
-                    table.Read(DriverImpresora, 0, (int)tam);
-                    FoundPrinters.AddUniqueItem(Functions.FilterPrinter(Encoding.Default.GetString(DriverImpresora).Replace("\0", "")));
-                    table.Close();
+                    if (table != null)
+                    {
+                        Byte[] DriverImpresora = new Byte[tam];
+                        table.Seek(dir, SeekOrigin.Begin);
+                        table.Read(DriverImpresora, 0, (int)tam);
+                        this.foundMetadata.Add(new Printer(Functions.FilterPrinter(Encoding.Default.GetString(DriverImpresora).Replace("\0", ""))));
+                        table.Close();
+                    }
                 }
             }
         }
@@ -174,7 +168,7 @@ namespace MetadataExtractCore.Metadata
                             Byte[] cadena = br1.ReadBytes(strSize);
                             ruta = Encoding.Default.GetString(cadena).Replace('\0', ' ');
                         }
-                        FoundPaths.AddUniqueItem(PathAnalysis.CleanPath(ruta), true);
+                        this.foundMetadata.Add(new Diagrams.Path(PathAnalysis.CleanPath(ruta), true));
                     }
                     table.Close();
                 }
@@ -189,7 +183,7 @@ namespace MetadataExtractCore.Metadata
                     return;
                 BinaryReader br = new BinaryReader(Workbook);
                 Workbook.Seek(0, SeekOrigin.Begin);
-                while (Workbook.Position <= Workbook.Length - 2)
+                while (Workbook.Position <= Workbook.Length - 4)
                 {
                     try
                     {
@@ -200,26 +194,26 @@ namespace MetadataExtractCore.Metadata
                         if (Tipo == 0x4D)
                         {
                             long PosOri = Workbook.Position;
-                            if (br.ReadInt16() == 0) 
+                            if (br.ReadInt16() == 0)
                             {
                                 String PrinterName = Encoding.Unicode.GetString(br.ReadBytes(32 * 2)).Replace('\0', ' ');
                                 br.ReadInt16();
                                 br.ReadInt16();
                                 Int16 StructSize = br.ReadInt16();
                                 Int16 DriverSize = br.ReadInt16();
-                               
+
                                 if (DriverSize != 0)
                                 {
                                     Workbook.Seek(StructSize - (8 + 64), SeekOrigin.Current);
                                     Byte[] Driver = br.ReadBytes(DriverSize);
                                     String ImpresoraDriver = Functions.ExtractPrinterFromBytes(Driver);
                                     if (!string.IsNullOrEmpty(ImpresoraDriver.Trim()))
-                                        FoundPrinters.AddUniqueItem(Functions.FilterPrinter(ImpresoraDriver.Replace("\0", "")));
+                                        this.foundMetadata.Add(new Printer(Functions.FilterPrinter(ImpresoraDriver.Replace("\0", ""))));
                                     else
-                                        FoundPrinters.AddUniqueItem(Functions.FilterPrinter(PrinterName.Replace("\0", "")));
+                                        this.foundMetadata.Add(new Printer(Functions.FilterPrinter(PrinterName.Replace("\0", ""))));
                                 }
                                 else
-                                    FoundPrinters.AddUniqueItem(Functions.FilterPrinter(PrinterName.Replace("\0", "")));
+                                    this.foundMetadata.Add(new Printer(Functions.FilterPrinter(PrinterName.Replace("\0", ""))));
                             }
                             Workbook.Position = PosOri;
                         }
@@ -233,7 +227,7 @@ namespace MetadataExtractCore.Metadata
             }
         }
 
-         private void GetHistory(OleDocument doc)
+        private void GetHistory(OleDocument doc)
         {
             using (Stream WordDocument = doc.OpenStream("WordDocument"))
             {
@@ -257,19 +251,23 @@ namespace MetadataExtractCore.Metadata
                         UInt32 extraDataTable = br.ReadUInt16();
                         for (int i = 0; i < nroCadenas; i += 2)
                         {
-                            HistoryItem hi = new HistoryItem();
+
                             UInt16 strSize = br.ReadUInt16();
+                            string author;
                             if (unicode)
                             {
                                 Byte[] cadena = br.ReadBytes(strSize * 2);
-                                hi.Author = Encoding.Unicode.GetString(cadena).Replace('\0', ' ');
+                                author = Encoding.Unicode.GetString(cadena).Replace('\0', ' ');
                             }
                             else
                             {
                                 Byte[] cadena = br.ReadBytes(strSize);
-                                hi.Author = Encoding.Default.GetString(cadena).Replace('\0', ' ');
+                                author = Encoding.Default.GetString(cadena).Replace('\0', ' ');
                             }
-                            FoundUsers.AddUniqueItem(hi.Author, false, "History");
+                            History hi = new History(author);
+
+                            this.foundMetadata.Add(new User(author, false, "History"));
+
                             strSize = br.ReadUInt16();
                             if (unicode)
                             {
@@ -281,13 +279,13 @@ namespace MetadataExtractCore.Metadata
                                 Byte[] cadena = br.ReadBytes(strSize);
                                 hi.Path = Encoding.Default.GetString(cadena).Replace('\0', ' ');
                             }
-                            FoundHistory.Items.Add(hi);
-                            bool IsComputerPath = false;
+                            this.foundMetadata.Add(hi);
+                            bool isComputerPath = false;
 
-                            foreach (UserItem ui in FoundUsers.Items)
-                                if (hi.Author.Trim() == ui.Name.Trim())
-                                    IsComputerPath = ui.IsComputerUser;
-                            FoundPaths.AddUniqueItem(PathAnalysis.CleanPath(hi.Path), IsComputerPath);
+                            foreach (User ui in this.foundMetadata.Users)
+                                if (hi.Value.Trim() == ui.Value.Trim())
+                                    isComputerPath = ui.IsComputerUser;
+                            this.foundMetadata.Add(new Diagrams.Path(PathAnalysis.CleanPath(hi.Path), isComputerPath));
                         }
                     }
                 }
@@ -304,8 +302,8 @@ namespace MetadataExtractCore.Metadata
                     switch (intLowVersion)
                     {
                         case 0:
-                            if (FoundMetaData.Applications.Items.Count == 0)
-                                FoundMetaData.Applications.Items.Add(new ApplicationsItem("OpenOffice"));
+                            if (this.foundMetadata.Applications.Count == 0)
+                                this.foundMetadata.Add(new Application("OpenOffice"));
                             break;
                     }
                     break;
@@ -313,39 +311,46 @@ namespace MetadataExtractCore.Metadata
                     switch (intLowVersion)
                     {
                         case 10:
-                            FoundMetaData.OperativeSystem = "Mac OS";
+                            this.foundMetadata.OperatingSystem = "Mac OS";
                             break;
                         case 51:
-                            FoundMetaData.OperativeSystem = "Windows NT 3.51";
+                            this.foundMetadata.OperatingSystem = "Windows NT 3.51";
                             break;
                     }
                     break;
                 case 4:
                     switch (intLowVersion)
                     {
-                        case 0: FoundMetaData.OperativeSystem = "Windows NT 4.0";
+                        case 0:
+                            this.foundMetadata.OperatingSystem = "Windows NT 4.0";
                             break;
-                        case 10: FoundMetaData.OperativeSystem = "Windows 98";
+                        case 10:
+                            this.foundMetadata.OperatingSystem = "Windows 98";
                             break;
                     }
                     break;
                 case 5:
                     switch (intLowVersion)
                     {
-                        case 0: FoundMetaData.OperativeSystem = "Windows Server 2000";
+                        case 0:
+                            this.foundMetadata.OperatingSystem = "Windows Server 2000";
                             break;
-                        case 1: FoundMetaData.OperativeSystem = "Windows XP";
+                        case 1:
+                            this.foundMetadata.OperatingSystem = "Windows XP";
                             break;
-                        case 2: FoundMetaData.OperativeSystem = "Windows Server 2003";
+                        case 2:
+                            this.foundMetadata.OperatingSystem = "Windows Server 2003";
                             break;
                     }
                     break;
                 case 6:
                     switch (intLowVersion)
                     {
-                        case 0: FoundMetaData.OperativeSystem = "Windows Vista";
+                        case 0:
+                            this.foundMetadata.OperatingSystem = "Windows Vista";
                             break;
-                        case 1: FoundMetaData.OperativeSystem = "Windows 7";
+                        case 1:
+                            this.foundMetadata.OperatingSystem = "Windows 7";
                             break;
                     }
                     break;
@@ -354,7 +359,8 @@ namespace MetadataExtractCore.Metadata
 
         private void GetPathPpt(OleDocument doc)
         {
-            using (var WordDocument = doc.OpenStream("PowerPoint Document")) {
+            using (var WordDocument = doc.OpenStream("PowerPoint Document"))
+            {
                 if (WordDocument == null)
                     return;
                 try
@@ -365,7 +371,7 @@ namespace MetadataExtractCore.Metadata
                         foreach (Match m in Regex.Matches(sr.ReadToEnd(), @"([a-z]:|\\)\\[a-zá-ú0-9\\\s,;.\-_#\$%&()=ñ´'¨{}Ç`/n/r\[\]+^@]+\\[a-zá-ú0-9\\\s,;.\-_#\$%&()=ñ´'¨{}Ç`/n/r\[\]+^@]+", RegexOptions.IgnoreCase))
                         {
                             string path = m.Value.Trim();
-                            FoundPaths.AddUniqueItem(PathAnalysis.CleanPath(path), true);
+                            this.foundMetadata.Add(new Diagrams.Path(PathAnalysis.CleanPath(path), true));
                         }
                     }
 
@@ -390,7 +396,7 @@ namespace MetadataExtractCore.Metadata
                     Int32 fcMac = br.ReadInt32();
                     Int32 FKPStart = fcMac % 0x200 == 0 ? fcMac : (fcMac - fcMac % 0x200) + 0x200;
                     WordDocument.Seek(FKPStart, SeekOrigin.Begin);
-                    int ImagesFound = 0;
+                    int imagesFound = 0;
 
                     while (WordDocument.Position + 0x200 < WordDocument.Length)
                     {
@@ -408,10 +414,10 @@ namespace MetadataExtractCore.Metadata
                                     UInt32 PICLength = brData.ReadUInt32();
                                     long posOri = stmData.Position;
                                     int bufferLen = PICLength < stmData.Length - stmData.Position ? (int)PICLength - 4 : (int)(stmData.Length - stmData.Position);
-                                    if (bufferLen == 0) continue;
+                                    if (bufferLen <= 0) continue;
                                     byte[] bufferPIC = brData.ReadBytes(bufferLen);
 
-                                    string strImageName = "Image" + ImagesFound++;
+                                    string strImageName = String.Empty;
 
                                     using (StreamReader sr = new StreamReader(new MemoryStream(bufferPIC), Encoding.Unicode))
                                     {
@@ -419,28 +425,29 @@ namespace MetadataExtractCore.Metadata
                                         foreach (Match m in Regex.Matches(sRead, @"([a-z]:|\\)\\[a-zá-ú0-9\\\s,;.\-_#\$%&()=ñ´'¨{}Ç`/n/r\[\]+^@]+\\[a-zá-ú0-9\\\s,;.\-_#\$%&()=ñ´'¨{}Ç`/n/r\[\]+^@]+", RegexOptions.IgnoreCase))
                                         {
                                             String path = m.Value.Trim();
-                                            FoundPaths.AddUniqueItem(PathAnalysis.CleanPath(path), true);
-                                            strImageName = Path.GetFileName(path);
+                                            this.foundMetadata.Add(new Diagrams.Path(PathAnalysis.CleanPath(path), true));
+                                            strImageName = System.IO.Path.GetFileName(path);
                                         }
                                     }
 
-                                    List<int> lstJPEG = Functions.SearchBytesInBytes(bufferPIC, new byte[] { 0xFF, 0xD8 });
+                                    if (String.IsNullOrEmpty(strImageName) || foundMetadata.EmbeddedImages.ContainsKey(strImageName))
+                                    {
+                                        strImageName = "Image" + imagesFound++;
+                                    }
+
+
+                                    List<int> lstJPEG = Functions.SearchBytesInBytes(bufferPIC, new byte[] { 0xFF, 0xD8, 0xFF });
                                     if (lstJPEG.Count > 0)
                                     {
                                         using (MemoryStream msJPG = new MemoryStream(bufferPIC, lstJPEG[0], bufferPIC.Length - lstJPEG[0]))
                                         {
-                                            EXIFDocument eDoc = new EXIFDocument(msJPG, ".jpg");
-                                            eDoc.analyzeFile();
-                                            dicPictureEXIF.Add(strImageName, eDoc);
-                                            foreach (UserItem uiEXIF in eDoc.FoundUsers.Items)
-                                                FoundUsers.AddUniqueItem(uiEXIF.Name, false, uiEXIF.Notes);
-                                            foreach (ApplicationsItem Application in eDoc.FoundMetaData.Applications.Items)
+                                            using (EXIFDocument eDoc = new EXIFDocument(msJPG))
                                             {
-                                                string strApplication = Application.Name;
-                                                if (!string.IsNullOrEmpty(strApplication.Trim()) && !FoundMetaData.Applications.Items.Any(A => A.Name == strApplication.Trim()))
-                                                    FoundMetaData.Applications.Items.Add(new ApplicationsItem(strApplication.Trim()));
+                                                FileMetadata exifMetadata = eDoc.AnalyzeFile();
+                                                foundMetadata.EmbeddedImages.Add(strImageName, exifMetadata);
+                                                this.foundMetadata.AddRange(exifMetadata.Users.ToArray());
+                                                this.foundMetadata.AddRange(exifMetadata.Applications.ToArray());
                                             }
-                                            eDoc.Close();
                                         }
                                     }
                                 }
@@ -468,27 +475,20 @@ namespace MetadataExtractCore.Metadata
                     if (PICLength == 0 || stmPictures.Position + PICLength > stmPictures.Length) break;
                     byte[] bufferPIC = brData.ReadBytes((int)PICLength);
                     string strImageName = "Image" + ImagesFound++;
+
                     using (MemoryStream msJPG = new MemoryStream(bufferPIC, 0x11, bufferPIC.Length - 0x11))
                     {
-                        EXIFDocument eDoc = new EXIFDocument(msJPG, ".jpg");
-       
-                        eDoc.analyzeFile();
-                        eDoc.Close();
-                        if (eDoc.Thumbnail != null)
-                            lon += eDoc.Thumbnail.Length;
-                        cont++;
-                        System.Diagnostics.Debug.WriteLine(cont.ToString());
-                        System.Diagnostics.Debug.WriteLine(lon /(1024*1024) + " Megacas");
-
-                        dicPictureEXIF.Add(strImageName, eDoc);
-
-                        foreach (UserItem uiEXIF in eDoc.FoundUsers.Items)
-                            FoundUsers.AddUniqueItem(uiEXIF.Name, false, uiEXIF.Notes);
-                        foreach (ApplicationsItem Application in eDoc.FoundMetaData.Applications.Items)
+                        FileMetadata exifMetadata = null;
+                        using (EXIFDocument eDoc = new EXIFDocument(msJPG))
                         {
-                            string strApplication = Application.Name;
-                            if (!string.IsNullOrEmpty(strApplication.Trim()) && !FoundMetaData.Applications.Items.Any(A => A.Name == strApplication.Trim()))
-                                FoundMetaData.Applications.Items.Add(new ApplicationsItem(strApplication.Trim()));
+                            exifMetadata = eDoc.AnalyzeFile();
+                        }
+                        if (exifMetadata != null)
+                        {
+                            foundMetadata.EmbeddedImages.Add(strImageName, exifMetadata);
+
+                            this.foundMetadata.AddRange(exifMetadata.Users.ToArray());
+                            this.foundMetadata.AddRange(exifMetadata.Applications.ToArray());
                         }
 
                     }
@@ -496,21 +496,11 @@ namespace MetadataExtractCore.Metadata
             }
         }
 
-        static int cont = 0;
-        static long lon = 0;
-
         private void GetLinksBinary(OleDocument doc)
         {
-            var pending = new List<Action>() {
-                () => GetLinksBinaryWorkbook(doc.OpenStream("Workbook")),
-                () => GetLinksWordDocument(doc.OpenStream("WordDocument")),
-                () => GetLinksBinaryPowerPointDocument(doc.OpenStream("PowerPoint Document"))
-            };
-            foreach (var call in pending)
-            {
-                call();
-            }
-            pending.Clear();
+            GetLinksBinaryWorkbook(doc.OpenStream("Workbook"));
+            GetLinksWordDocument(doc.OpenStream("WordDocument"));
+            GetLinksBinaryPowerPointDocument(doc.OpenStream("PowerPoint Document"));
         }
 
         private void GetLinksWordDocument(Stream document)
@@ -541,7 +531,7 @@ namespace MetadataExtractCore.Metadata
                         }
                         aux = PathAnalysis.CleanPath(aux);
 
-                        FoundPaths.AddUniqueItem(aux, true);
+                        this.foundMetadata.Add(new Diagrams.Path(aux, true));
                     }
                 }
             }
@@ -566,9 +556,9 @@ namespace MetadataExtractCore.Metadata
                             continue;
 
                         string aux = link;
-                        aux = aux.Trim(new char[] { (char)18 }); 
+                        aux = aux.Trim(new char[] { (char)18 });
 
-                        if (!link.EndsWith("/"))    
+                        if (!link.EndsWith("/"))
                         {
                             int cuentaSlash = 0;
                             for (int i = 0; i < aux.Length; i++)
@@ -579,7 +569,7 @@ namespace MetadataExtractCore.Metadata
                         }
 
                         aux = PathAnalysis.CleanPath(aux);
-                        FoundPaths.AddUniqueItem(aux, true);
+                        this.foundMetadata.Add(new Diagrams.Path(aux, true));
                     }
                 }
             }
@@ -597,69 +587,17 @@ namespace MetadataExtractCore.Metadata
                 {
                     string link = m.Value.Trim();
                     if (IsInterestingLink(link))
-                        FoundPaths.AddUniqueItem(PathAnalysis.CleanPath(link), true);
+                        this.foundMetadata.Add(new Diagrams.Path(PathAnalysis.CleanPath(link), true));
                 }
             }
-        }
-
-
-      private bool IsInterestingLink(string href)
-        {
-            if (href != string.Empty)
-            {
-                if (href.StartsWith("mailto:"))
-                {
-                    string email = href.Substring(7, (href.Contains("?") ? href.IndexOf('?') : href.Length) - 7);
-                    FoundEmails.AddUniqueItem(email);
-                }
-                else if (href.StartsWith("ftp:"))
-                {
-                    return true;
-                }
-                else if (href.StartsWith("http:"))
-                {
-                    return true;
-                }
-                else if (href.StartsWith("https:"))
-                {
-                    return true;
-                }
-                else if (href.StartsWith("telnet:"))
-                {
-                    return true;
-                }
-                else if (href.StartsWith("ldap:"))
-                {
-                    return true;
-                }
-                else
-                {
-                    try
-                    {
-                        Uri u = new Uri(href);
-                        if (u.HostNameType != UriHostNameType.Dns)
-                        {
-                            return true;
-                        }
-                    }
-                    catch (UriFormatException)  
-                    {
-                        if (!href.StartsWith("#")) 
-                        {
-                            return true;
-                        }
-                    }
-                }
-            }
-            return false;
         }
 
         private void GetUserFromPaths()
         {
-            foreach (PathsItem ri in FoundPaths.Items)
+            foreach (Diagrams.Path ri in this.foundMetadata.Paths)
             {
-                string strUser = PathAnalysis.ExtractUserFromPath(ri.Path);
-                FoundUsers.AddUniqueItem(strUser, ri.IsComputerFolder, ri.Path);
+                string strUser = PathAnalysis.ExtractUserFromPath(ri.Value);
+                this.foundMetadata.Add(new User(strUser, ri.IsComputerFolder, ri.Value));
             }
         }
     }

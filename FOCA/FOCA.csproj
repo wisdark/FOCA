@@ -1,14 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="12.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
-    <!--
-    The location where Dotfuscator is installed.
-    -->
-    <DotfuscatorBinPath>$(DevEnvDir)..\..\Application\PreEmptive Solutions\Dotfuscator Community Edition\dotfuscator.exe</DotfuscatorBinPath>
-    <!--
-    The location of your Dotfuscator configuration file.
-     -->
-    <ConfigPath>"$(ProjectDir)foca_dotfuscator.xml"</ConfigPath>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <ProductVersion>9.0.21022</ProductVersion>
@@ -29,14 +21,14 @@
     <ManifestCertificateThumbprint>DAD76C8149967FFEFB23DDCD9674B80CD215ED4E</ManifestCertificateThumbprint>
     <ManifestKeyFile>
     </ManifestKeyFile>
-    <GenerateManifests>true</GenerateManifests>
+    <GenerateManifests>false</GenerateManifests>
     <TargetZone>LocalIntranet</TargetZone>
     <ApplicationManifest>Properties\app.manifest</ApplicationManifest>
     <SignManifests>false</SignManifests>
     <RunPostBuildEvent>Always</RunPostBuildEvent>
     <StartupObject>FOCA.Program</StartupObject>
     <ManifestTimestampUrl>http://timestamp.verisign.com/scripts/timestamp.dll</ManifestTimestampUrl>
-    <SignAssembly>true</SignAssembly>
+    <SignAssembly>false</SignAssembly>
     <AssemblyOriginatorKeyFile>
     </AssemblyOriginatorKeyFile>
     <DelaySign>false</DelaySign>
@@ -46,7 +38,7 @@
     </UpgradeBackupLocation>
     <OldToolsVersion>3.5</OldToolsVersion>
     <TargetFrameworkProfile />
-    <PublishUrl>C:\Users\Alekusu\Desktop\Foca Free\</PublishUrl>
+    <PublishUrl>publish\</PublishUrl>
     <Install>true</Install>
     <InstallFrom>Disk</InstallFrom>
     <UpdateEnabled>false</UpdateEnabled>
@@ -65,14 +57,14 @@
     <ApplicationVersion>2.6.0.0</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <PublishWizardCompleted>true</PublishWizardCompleted>
-    <BootstrapperEnabled>true</BootstrapperEnabled>
+    <BootstrapperEnabled>false</BootstrapperEnabled>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
     <DebugType>full</DebugType>
     <Optimize>false</Optimize>
     <OutputPath>bin\Debug\</OutputPath>
-    <DefineConstants>PRO, BackUps, PLUGINS, leaks</DefineConstants>
+    <DefineConstants>DEBUG;PRO, BackUps, PLUGINS, leaks</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
     <Prefer32Bit>false</Prefer32Bit>
@@ -86,32 +78,15 @@
     <WarningLevel>4</WarningLevel>
     <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
+  <PropertyGroup>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+  </PropertyGroup>
   <ItemGroup>
-    <Reference Include="EntityFramework, Version=6.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089, processorArchitecture=MSIL">
-      <HintPath>..\packages\EntityFramework.6.1.3\lib\net45\EntityFramework.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
-    <Reference Include="EntityFramework.SqlServer, Version=6.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089, processorArchitecture=MSIL">
-      <HintPath>..\packages\EntityFramework.6.1.3\lib\net45\EntityFramework.SqlServer.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
-    <Reference Include="HtmlAgilityPack, Version=1.4.9.5, Culture=neutral, PublicKeyToken=bd319b19eaf3b43a, processorArchitecture=MSIL">
-      <HintPath>..\packages\HtmlAgilityPack.1.4.9.5\lib\Net20\HtmlAgilityPack.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
     <Reference Include="Ionic.Zip">
       <HintPath>..\lib\Ionic.Zip.dll</HintPath>
     </Reference>
     <Reference Include="DNSLibrary">
       <HintPath>..\lib\DNSLibrary.dll</HintPath>
-    </Reference>
-    <Reference Include="Newtonsoft.Json, Version=10.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
-      <HintPath>..\packages\Newtonsoft.Json.10.0.2\lib\net35\Newtonsoft.Json.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
-    <Reference Include="NLog, Version=4.0.0.0, Culture=neutral, PublicKeyToken=5120e14c03d0593c, processorArchitecture=MSIL">
-      <HintPath>..\packages\NLog.4.4.9\lib\net45\NLog.dll</HintPath>
-      <Private>True</Private>
     </Reference>
     <Reference Include="PluginsAPI, Version=1.1.0.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
@@ -119,10 +94,10 @@
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.ComponentModel.DataAnnotations" />
+    <Reference Include="System.Configuration" />
     <Reference Include="System.Core">
       <RequiredTargetFramework>3.5</RequiredTargetFramework>
     </Reference>
-    <Reference Include="System.Net.Http" />
     <Reference Include="System.Runtime.Serialization">
       <RequiredTargetFramework>3.0</RequiredTargetFramework>
     </Reference>
@@ -156,7 +131,6 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Analysis\ApplicationAnalisys.cs" />
     <Compile Include="Analysis\DNSCacheSnooping\DNSCache.cs" />
     <Compile Include="Analysis\FingerPrinting\BannerAnalisys.cs" />
     <Compile Include="Analysis\FingerPrinting\DNS.cs" />
@@ -169,37 +143,56 @@
     <Compile Include="Analysis\HttpMap\HttpMap.cs" />
     <Compile Include="Analysis\OperatingSystemUtils.cs" />
     <Compile Include="Analysis\Pinger\Pinger.cs" />
-    <Compile Include="Analysis\ShodanRecognition.cs" />
     <Compile Include="Analysis\Technology\TechnologyAnalysis.cs" />
     <Compile Include="Analysis\Technology\TechnologyAnalysisHandler.cs" />
-    <Compile Include="Controllers\BaseController.cs" />
-    <Compile Include="Controllers\ComputerDomainController.cs" />
-    <Compile Include="Controllers\ComputerIpsController.cs" />
-    <Compile Include="Controllers\ComputersController.cs" />
-    <Compile Include="Controllers\ConfigurationController.cs" />
-    <Compile Include="Controllers\DomainsController.cs" />
-    <Compile Include="Controllers\FilesController.cs" />
-    <Compile Include="Controllers\FocaContextDb.cs" />
-    <Compile Include="Controllers\HttpMapController.cs" />
-    <Compile Include="Controllers\IpsController.cs" />
-    <Compile Include="Controllers\LimitsController.cs" />
-    <Compile Include="Controllers\PluginsController.cs" />
-    <Compile Include="Controllers\ProjectController.cs" />
-    <Compile Include="Controllers\RelationsController.cs" />
-    <Compile Include="Data\ComputerDomains.cs" />
-    <Compile Include="Data\ComputerIPs.cs" />
-    <Compile Include="Data\Computers.cs" />
-    <Compile Include="Data\Data.cs" />
-    <Compile Include="Data\Domains.cs" />
-    <Compile Include="Data\HttpMapTypesFiles.cs" />
-    <Compile Include="Data\Ficheros.cs">
+    <Compile Include="Database\Controllers\BaseController.cs" />
+    <Compile Include="Database\Controllers\ComputerDomainController.cs" />
+    <Compile Include="Database\Controllers\ComputerIpsController.cs" />
+    <Compile Include="Database\Controllers\ComputersController.cs" />
+    <Compile Include="Database\Controllers\ConfigurationController.cs" />
+    <Compile Include="Database\Controllers\DomainsController.cs" />
+    <Compile Include="Database\Controllers\FilesController.cs" />
+    <Compile Include="Database\Entities\Applications.cs" />
+    <Compile Include="Database\Entities\BaseItem.cs" />
+    <Compile Include="Database\Entities\Dates.cs" />
+    <Compile Include="Database\Entities\Descriptions.cs" />
+    <Compile Include="Database\Entities\Emails.cs" />
+    <Compile Include="Database\Entities\History.cs" />
+    <Compile Include="Database\Entities\MetaData.cs" />
+    <Compile Include="Database\Entities\MetaExtractor.cs" />
+    <Compile Include="Database\Entities\OldVersions.cs" />
+    <Compile Include="Database\Entities\Passwords.cs" />
+    <Compile Include="Database\Entities\Paths.cs" />
+    <Compile Include="Database\Entities\Printers.cs" />
+    <Compile Include="Database\Entities\Servers.cs" />
+    <Compile Include="Database\Entities\Users.cs" />
+    <Compile Include="Database\FocaContextDb.cs" />
+    <Compile Include="Database\Controllers\HttpMapController.cs" />
+    <Compile Include="Database\Controllers\IpsController.cs" />
+    <Compile Include="Database\Controllers\LimitsController.cs" />
+    <Compile Include="Database\Controllers\PluginsController.cs" />
+    <Compile Include="Database\Controllers\ProjectController.cs" />
+    <Compile Include="Database\Controllers\RelationsController.cs" />
+    <Compile Include="Database\Entities\ComputerDomains.cs" />
+    <Compile Include="Database\Entities\ComputerIPs.cs" />
+    <Compile Include="Database\Entities\Computers.cs" />
+    <Compile Include="Database\Entities\Data.cs" />
+    <Compile Include="Database\Entities\Domains.cs" />
+    <Compile Include="Database\Entities\HttpMapTypesFiles.cs" />
+    <Compile Include="Database\Entities\Ficheros.cs">
       <SubType>Code</SubType>
     </Compile>
-    <Compile Include="Data\IPs.cs" />
-    <Compile Include="Data\Limits.cs" />
-    <Compile Include="Data\Log.cs" />
-    <Compile Include="Data\OperatingSystem.cs" />
-    <Compile Include="Data\Relations.cs" />
+    <Compile Include="Database\Entities\IPs.cs" />
+    <Compile Include="Database\Entities\Limits.cs" />
+    <Compile Include="Database\Migrations\201908230648106_RemoveUnusedBackupSupport.cs" />
+    <Compile Include="Database\Migrations\201908230648106_RemoveUnusedBackupSupport.Designer.cs">
+      <DependentUpon>201908230648106_RemoveUnusedBackupSupport.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Utilities\Log.cs" />
+    <Compile Include="Utilities\NetRange.cs" />
+    <Compile Include="Utilities\OperatingSystem.cs" />
+    <Compile Include="Database\Entities\Project.cs" />
+    <Compile Include="Database\Entities\Relations.cs" />
     <Compile Include="DNSEnumeration\DNSDumpsterParser.cs" />
     <Compile Include="DNSEnumeration\DNSUtil.cs" />
     <Compile Include="DNSEnumeration\PanelDNSSearchInformation.cs">
@@ -292,12 +285,6 @@
     <Compile Include="FormAddIP.Designer.cs">
       <DependentUpon>FormAddIP.cs</DependentUpon>
     </Compile>
-    <Compile Include="FormAddIpRange.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="FormAddIpRange.Designer.cs">
-      <DependentUpon>FormAddIpRange.cs</DependentUpon>
-    </Compile>
     <Compile Include="FormAddMultipleDomains.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -348,11 +335,11 @@
     </Compile>
     <Compile Include="GUI\Contextual.cs" />
     <Compile Include="GUI\UpdateGUI.cs" />
-    <Compile Include="Migrations\201708141321589_Initial.cs" />
-    <Compile Include="Migrations\201708141321589_Initial.Designer.cs">
+    <Compile Include="Database\Migrations\201708141321589_Initial.cs" />
+    <Compile Include="Database\Migrations\201708141321589_Initial.Designer.cs">
       <DependentUpon>201708141321589_Initial.cs</DependentUpon>
     </Compile>
-    <Compile Include="Migrations\Configuration.cs" />
+    <Compile Include="Database\Migrations\Configuration.cs" />
     <Compile Include="ModifiedComponents\CheckedButton.cs">
       <SubType>Component</SubType>
     </Compile>
@@ -368,7 +355,6 @@
     <Compile Include="ModifiedComponents\TreeViewNoFickering.cs">
       <SubType>Component</SubType>
     </Compile>
-    <Compile Include="Net\Request.cs" />
     <Compile Include="PanelDNSSearch.cs">
       <SubType>UserControl</SubType>
     </Compile>
@@ -410,12 +396,6 @@
     </Compile>
     <Compile Include="PanelMetadataSearch.Designer.cs">
       <DependentUpon>PanelMetadataSearch.cs</DependentUpon>
-    </Compile>
-    <Compile Include="PanelSoftwareSearch.cs">
-      <SubType>UserControl</SubType>
-    </Compile>
-    <Compile Include="PanelSoftwareSearch.Designer.cs">
-      <DependentUpon>PanelSoftwareSearch.cs</DependentUpon>
     </Compile>
     <Compile Include="PanelTasks.cs">
       <SubType>UserControl</SubType>
@@ -463,7 +443,7 @@
     <Compile Include="FormDocumentsSearch.Designer.cs">
       <DependentUpon>FormDocumentsSearch.cs</DependentUpon>
     </Compile>
-    <Compile Include="Functions.cs">
+    <Compile Include="Utilities\Functions.cs">
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="Properties\Resources.Designer.cs">
@@ -487,6 +467,9 @@
     </Compile>
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <EmbeddedResource Include="Database\Migrations\201908230648106_RemoveUnusedBackupSupport.resx">
+      <DependentUpon>201908230648106_RemoveUnusedBackupSupport.cs</DependentUpon>
+    </EmbeddedResource>
     <EmbeddedResource Include="FormAddAltDNSParser.resx">
       <DependentUpon>FormAddAltDNSParser.cs</DependentUpon>
     </EmbeddedResource>
@@ -511,7 +494,7 @@
     <EmbeddedResource Include="FormPlugins.resx">
       <DependentUpon>FormPlugins.cs</DependentUpon>
     </EmbeddedResource>
-    <EmbeddedResource Include="Migrations\201708141321589_Initial.resx">
+    <EmbeddedResource Include="Database\Migrations\201708141321589_Initial.resx">
       <DependentUpon>201708141321589_Initial.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="Properties\Resources.resx">
@@ -519,7 +502,6 @@
       <SubType>Designer</SubType>
       <LastGenOutput>Resources.Designer.cs</LastGenOutput>
     </EmbeddedResource>
-    <None Include="FOCA_Pro.nrproj" />
     <Content Include="Icons\bing.png" />
     <Content Include="Icons\chart_organisation.png" />
     <Content Include="Icons\Logo_interfaz.ico" />
@@ -531,16 +513,6 @@
     <None Include="NLog.xsd">
       <SubType>Designer</SubType>
     </None>
-    <None Include="packages.config" />
-    <None Include="Properties\Settings.settings">
-      <Generator>SettingsSingleFileGenerator</Generator>
-      <LastGenOutput>Settings.Designer.cs</LastGenOutput>
-    </None>
-    <Compile Include="Properties\Settings.Designer.cs">
-      <AutoGen>True</AutoGen>
-      <DependentUpon>Settings.settings</DependentUpon>
-      <DesignTimeSharedInput>True</DesignTimeSharedInput>
-    </Compile>
     <Compile Include="SubdomainSearcher\DNSUtilities.cs" />
     <Compile Include="TaskManager\Tasker.cs" />
     <Compile Include="Win7Integration\CoreErrorHelper.cs" />
@@ -779,10 +751,6 @@
       <DependentUpon>FormAddIP.cs</DependentUpon>
       <SubType>Designer</SubType>
     </EmbeddedResource>
-    <EmbeddedResource Include="FormAddIpRange.resx">
-      <DependentUpon>FormAddIpRange.cs</DependentUpon>
-      <SubType>Designer</SubType>
-    </EmbeddedResource>
     <EmbeddedResource Include="FormAssignIp.resx">
       <DependentUpon>FormAssignIp.cs</DependentUpon>
       <SubType>Designer</SubType>
@@ -847,10 +815,6 @@
       <DependentUpon>PanelMetadataSearch.cs</DependentUpon>
       <SubType>Designer</SubType>
     </EmbeddedResource>
-    <EmbeddedResource Include="PanelSoftwareSearch.resx">
-      <DependentUpon>PanelSoftwareSearch.cs</DependentUpon>
-      <SubType>Designer</SubType>
-    </EmbeddedResource>
     <EmbeddedResource Include="PanelTasks.resx">
       <DependentUpon>PanelTasks.cs</DependentUpon>
       <SubType>Designer</SubType>
@@ -871,7 +835,26 @@
   <ItemGroup>
     <WCFMetadata Include="Service References\" />
   </ItemGroup>
-  <ItemGroup />
+  <ItemGroup>
+    <PackageReference Include="com.rusanu.dataconnectiondialog">
+      <Version>1.0.0.1</Version>
+    </PackageReference>
+    <PackageReference Include="EntityFramework">
+      <Version>6.3.0</Version>
+    </PackageReference>
+    <PackageReference Include="HtmlAgilityPack">
+      <Version>1.11.16</Version>
+    </PackageReference>
+    <PackageReference Include="Newtonsoft.Json">
+      <Version>12.0.2</Version>
+    </PackageReference>
+    <PackageReference Include="NLog.Config">
+      <Version>4.6.7</Version>
+    </PackageReference>
+    <PackageReference Include="System.Net.Http">
+      <Version>4.3.4</Version>
+    </PackageReference>
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\MetadataExtractCore\MetadataExtractCore.csproj">
       <Project>{61736B0E-FFE6-45FC-B3F0-8B45F991A772}</Project>
@@ -901,9 +884,4 @@
   </Target>
   <Target Name="BeforeRebuild">
   </Target>
-  <ProjectExtensions>
-    <VisualStudio>
-      <UserProperties Reactor_Enabled="1" Reactor_Commands="" Reactor_Project="C:\Users\Alekusu\Documents\Visual Studio 2008\Projects\FOCANormal\FOCA\FOCA.nrproj" Reactor_Configuration="Release Pro" Reactor_Output="&lt;AssemblyLocation&gt;\&lt;AssemblyName&gt;_Secure\&lt;AssemblyFileName&gt;" Reactor_Deploy="0" />
-    </VisualStudio>
-  </ProjectExtensions>
 </Project>

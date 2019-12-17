@@ -1,24 +1,18 @@
-using System;
-using System.Collections.Generic;
-using System.Windows.Forms;
-using System.IO;
-using System.IO.Packaging;
-using System.Linq;
-using System.Text;
-using System.Xml.Serialization;
-using System.Threading;
-using MetadataExtractCore.Utilities;
+using FOCA.Database.Controllers;
+using FOCA.Database.Entities;
 using FOCA.Threads;
-using FOCA.Controllers;
-using MetadataExtractCore;
 using MetadataExtractCore.Diagrams;
-using MetadataExtractCore.Metadata;
-using PluginsAPI;
+using System;
+using System.Collections.Concurrent;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Windows.Forms;
 
 namespace FOCA.Core
 {
     /// <summary>
-    /// Clase dedicada a albergar toda la funcionalidad del guardado y carga de proyectos
+    /// Class aimed to contain all storing projects and loading projects logic
     /// </summary>
     public class ProjectManager
     {
@@ -30,7 +24,7 @@ namespace FOCA.Core
             this.mainForm = mainForm;
         }
 
-        #region Funciones de carga de datos
+        #region Loading data methods
 
         public void LoadProject(string strPathSavedFile)
         {
@@ -104,7 +98,7 @@ namespace FOCA.Core
                 mainForm.LoadInitialProjectGui();
                 GUI.UpdateGUI.Reset();
             }));
-            
+
             LoadData();
             LoadMetadataSumaryData();
         }
@@ -116,11 +110,11 @@ namespace FOCA.Core
         {
             var idProject = Program.data.Project.Id;
 
-            LoadProyectDataController(idProject);
+            LoadProjectDataController(idProject);
 
             Program.data.OnLog +=
                 new EventHandler<EventsThreads.ThreadStringEventArgs>(
-                    delegate(object s, EventsThreads.ThreadStringEventArgs ev)
+                    delegate (object s, EventsThreads.ThreadStringEventArgs ev)
                     {
                         Program.LogThis(new Log(Log.ModuleType.DNS, ev.Message, Log.LogType.debug));
                     });
@@ -128,39 +122,31 @@ namespace FOCA.Core
             mainForm.Invoke(new MethodInvoker(delegate
             {
                 mainForm.panelMetadataSearch.listViewDocuments.BeginUpdate();
-            }));
 
-            foreach (var fi in Program.data.files.Items)
-            {
-                mainForm.Invoke(new MethodInvoker(delegate
+                foreach (FilesItem fi in Program.data.files.Items)
                 {
                     Program.FormMainInstance.panelMetadataSearch.listViewDocuments_Update(fi);
-                    //Carga los metadatos si los tiene
-                    if (fi.Metadata != null)
+                    if (fi.Processed)
                     {
-                        TreeNode tn_file = tn_file = Program.FormMainInstance.TreeViewMetadataAddDocument(fi.Path);
+                        TreeNode tn_file = Program.FormMainInstance.TreeViewMetadataAddDocument(fi);
                         tn_file.Tag = fi;
-                        var Extension = Path.GetExtension(fi.Path).ToLower();
+                        string extension = System.IO.Path.GetExtension(fi.Path).ToLower();
                         tn_file.ImageIndex =
-                            tn_file.SelectedImageIndex = Program.FormMainInstance.GetImageToExtension(Extension);
-                        Program.FormMainInstance.panelMetadataSearch.AddDocumentNodes(fi.Metadata, tn_file);
+                            tn_file.SelectedImageIndex = Program.FormMainInstance.GetImageToExtension(extension);
+                        //Carga los metadatos si los tiene
+                        if (fi.Metadata != null)
+                        {
+                            Program.FormMainInstance.panelMetadataSearch.AddDocumentNodes(fi.Metadata, tn_file);
+                        }
                     }
-                }));
-            }
-            mainForm.Invoke(new MethodInvoker(delegate
-            {
-                foreach (var f in Program.data.files.Items.Where(f => f.Processed))
-                {
-                    Program.FormMainInstance.TreeViewMetadataAddDocument(f.Path);
                 }
 
                 mainForm.treeViewMetadata_UpdateDocumentsNumber();
                 mainForm.panelMetadataSearch.listViewDocuments.EndUpdate();
             }));
-
         }
 
-        public static void LoadProyectDataController(int idProject)
+        public static void LoadProjectDataController(int idProject)
         {
             Program.data.Project = new ProjectController().GetProjectById(idProject);
             Program.data.domains.Items = new DomainsController().GetDomainsById(idProject);
@@ -168,7 +154,7 @@ namespace FOCA.Core
             Program.data.computerIPs.Items = new ComputerIpsController().GetComputerIpsByIdProject(idProject);
             Program.data.computerDomains.Items = new ComputerDomainController().GetComputerDomainByIdProject(idProject);
             Program.data.lstLimits = new LimitsController().GetLimitsByIdProject(idProject);
-            Program.data.relations.Items = new RelationsController().GetReltationsByIdProject(idProject);
+            Program.data.relations.Items = new RelationsController().GetRelationsByIdProject(idProject);
             Program.data.files.Items = new FilesController().GetFilesByIdProject(idProject);
             Program.data.Ips.Items = new IpsController().GetIpsByIdProject(idProject);
             Program.data.plugins.lstPlugins = new PluginsController().GetAllPlugins();
@@ -183,37 +169,37 @@ namespace FOCA.Core
 
             var listMetadata = (from item in filesItems where item.Metadata != null select item.Metadata).ToList();
 
-            var usersValue= (from item in listMetadata where item.FoundUsers.Items.Count != 0 select item.FoundUsers.Items);
-            List<UserItem> listParamUser = usersValue.SelectMany(item => item).ToList();
+            var usersValue = (from item in listMetadata where item.FoundUsers.Items.Count != 0 select item.FoundUsers.Items);
+            ConcurrentBag<UserItem> listParamUser = new ConcurrentBag<UserItem>(usersValue.SelectMany(item => item));
             mainForm.TreeView.Nodes[GUI.UpdateGUI.TreeViewKeys.KProject.ToString()].Nodes[
             GUI.UpdateGUI.TreeViewKeys.KMetadata.ToString()].Nodes["Metadata Summary"].Nodes["Users"].Tag = listParamUser;
 
             var printerValue = (from item in listMetadata where item.FoundPrinters.Items.Count != 0 select item.FoundPrinters.Items);
-            List<PrintersItem> listParamPrinter = printerValue.SelectMany(item => item).ToList();
+            ConcurrentBag<PrintersItem> listParamPrinter = new ConcurrentBag<PrintersItem>(printerValue.SelectMany(item => item));
             mainForm.TreeView.Nodes[GUI.UpdateGUI.TreeViewKeys.KProject.ToString()].Nodes[GUI.UpdateGUI.TreeViewKeys.KMetadata.ToString()].Nodes["Metadata Summary"].Nodes["Printers"].Tag = listParamPrinter;
 
             var pathsValue = (from item in listMetadata where item.FoundPaths.Items.Count != 0 select item.FoundPaths.Items);
-            List<PathsItem> listParamPaths = pathsValue.SelectMany(item => item).ToList();
+            ConcurrentBag<PathsItem> listParamPaths = new ConcurrentBag<PathsItem>(pathsValue.SelectMany(item => item));
             mainForm.TreeView.Nodes[GUI.UpdateGUI.TreeViewKeys.KProject.ToString()].Nodes[GUI.UpdateGUI.TreeViewKeys.KMetadata.ToString()].Nodes["Metadata Summary"].Nodes["Folders"].Tag = listParamPaths;
 
             var emailsValue = (from item in listMetadata where item.FoundEmails.Items.Count != 0 select item.FoundEmails.Items);
-            List<EmailsItem> listParamEmails = emailsValue.SelectMany(item => item).ToList();
+            ConcurrentBag<EmailsItem> listParamEmails = new ConcurrentBag<EmailsItem>(emailsValue.SelectMany(item => item));
             mainForm.TreeView.Nodes[GUI.UpdateGUI.TreeViewKeys.KProject.ToString()].Nodes[GUI.UpdateGUI.TreeViewKeys.KMetadata.ToString()].Nodes["Metadata Summary"].Nodes["Emails"].Tag = listParamEmails;
 
             var serversValue = (from item in listMetadata where item.FoundServers.Items.Count != 0 select item.FoundServers.Items);
-            List<ServersItem> listParamServers = serversValue.SelectMany(item => item).ToList();
+            ConcurrentBag<ServersItem> listParamServers = new ConcurrentBag<ServersItem>(serversValue.SelectMany(item => item));
             mainForm.TreeView.Nodes[GUI.UpdateGUI.TreeViewKeys.KProject.ToString()].Nodes[GUI.UpdateGUI.TreeViewKeys.KMetadata.ToString()].Nodes["Metadata Summary"].Nodes["Servers"].Tag = listParamServers;
 
             var softValue = (from item in listMetadata where item.FoundMetaData.Applications.Items.Count != 0 select item.FoundMetaData.Applications.Items);
-            List<ApplicationsItem> listParamsoft = softValue.SelectMany(item => item).ToList();
+            ConcurrentBag<ApplicationsItem> listParamsoft = new ConcurrentBag<ApplicationsItem>(softValue.SelectMany(item => item));
             mainForm.TreeView.Nodes[GUI.UpdateGUI.TreeViewKeys.KProject.ToString()].Nodes[GUI.UpdateGUI.TreeViewKeys.KMetadata.ToString()].Nodes["Metadata Summary"].Nodes["Software"].Tag = listParamsoft;
 
 
             var passValue = (from item in listMetadata where item.FoundPasswords.Items.Count != 0 select item.FoundPasswords.Items);
-            List<PasswordsItem> listParamPass = passValue.SelectMany(item => item).ToList();
+            ConcurrentBag<PasswordsItem> listParamPass = new ConcurrentBag<PasswordsItem>(passValue.SelectMany(item => item));
             mainForm.TreeView.Nodes[GUI.UpdateGUI.TreeViewKeys.KProject.ToString()].Nodes[GUI.UpdateGUI.TreeViewKeys.KMetadata.ToString()].Nodes["Metadata Summary"].Nodes["Passwords"].Tag = listParamPass;
 
-            var listOs = (from item in listMetadata where item.FoundMetaData.OperativeSystem != null select item.FoundMetaData.OperativeSystem).ToList();
+            var listOs = new ConcurrentBag<string>(from item in listMetadata where item.FoundMetaData.OperativeSystem != null select item.FoundMetaData.OperativeSystem);
             mainForm.TreeView.Nodes[GUI.UpdateGUI.TreeViewKeys.KProject.ToString()].Nodes[GUI.UpdateGUI.TreeViewKeys.KMetadata.ToString()].Nodes["Metadata Summary"].Nodes["Operating Systems"].Tag = listOs;
 
             mainForm.TreeView.Invoke(new MethodInvoker(delegate
@@ -234,13 +220,11 @@ namespace FOCA.Core
 
                 mainForm.TreeView.Nodes[GUI.UpdateGUI.TreeViewKeys.KProject.ToString()].Nodes[GUI.UpdateGUI.TreeViewKeys.KMetadata.ToString()].Nodes["Metadata Summary"].Nodes["Servers"].Text = string.Format("Servers ({0})", listParamServers.Count);
             }));
-
-
         }
 
         #endregion
 
-        #region Funciones de guardado de datos
+        #region Saving data methods
 
         public void SaveProject(string strPathSavedFile)
         {
@@ -263,6 +247,7 @@ namespace FOCA.Core
             new ProjectController().Save(Program.data.Project);
             new DomainsController().Save(Program.data.domains.Items);
             new ComputersController().Save(Program.data.computers.Items);
+            new IpsController().Save(Program.data.Ips.Items);
             new ComputerIpsController().Save(Program.data.computerIPs.Items);
             new ComputerDomainController().Save(Program.data.computerDomains.Items);
             new LimitsController().Save(Program.data.lstLimits);
@@ -270,7 +255,6 @@ namespace FOCA.Core
             new FilesController().Save(Program.data.files.Items);
             new PluginsController().Save(Program.data.plugins.lstPlugins);
         }
-
 
         private void SaveProjectThread(object o)
         {
@@ -307,7 +291,6 @@ namespace FOCA.Core
             }
         }
 
-      
         #endregion
     }
 }

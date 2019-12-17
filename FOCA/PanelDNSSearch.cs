@@ -1,21 +1,17 @@
-﻿using System;
+﻿using FOCA.Database.Entities;
+using FOCA.Properties;
+using FOCA.Searcher;
+using FOCA.Threads;
+using Heijden.DNS;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using FOCA.Analysis;
-using FOCA.Properties;
-using FOCA.Searcher;
-using FOCA.Threads;
-using Heijden.DNS;
-using MetadataExtractCore;
-using MetadataExtractCore.Diagrams;
-using SearcherCore.Searcher.BingAPI;
 
 namespace FOCA
 {
@@ -29,6 +25,7 @@ namespace FOCA
         private bool bSkipToNextSearch;
         private string CommonNamesFileName;
         private int MaxRecursion;
+        private CancellationTokenSource searchCancelToken;
 
         private Resolver Resolve;
 
@@ -56,18 +53,18 @@ namespace FOCA
         /// <param name="e"></param>
         private void PanelDNSSearch_Load(object sender, EventArgs e)
         {
-            if (Program.DesingMode()) return;
+            if (Program.DesignMode()) return;
             Resolve = new Resolver
             {
-                TimeOut          = 1000,
+                TimeOut = 1000,
                 SearchWithAllDNS = Program.cfgCurrent.UseAllDns
             };
 
             Program.data.SetResolver(Resolve);
-            if (!Program.DesingMode())
+            if (!Program.DesignMode())
             {
                 Program.data.OnLog +=
-                    delegate(object s, EventsThreads.ThreadStringEventArgs ev)
+                    delegate (object s, EventsThreads.ThreadStringEventArgs ev)
                     {
                         Program.LogThis(new Log(Log.ModuleType.DNS, ev.Message, Log.LogType.debug));
                     };
@@ -81,11 +78,11 @@ namespace FOCA
         /// <param name="e"></param>
         private void checkedButton_Click(object sender, EventArgs e)
         {
-            panelWebSearcher.Visible          = sender == checkedButtonWebSearcher;
+            panelWebSearcher.Visible = sender == checkedButtonWebSearcher;
             panelDNSSearchInformation.Visible = sender == checkedButtonDNSSearch;
-            panelTryTransferZone.Visible      = sender == checkedButtonTransferZone;
-            panelTryCommonNames.Visible       = sender == checkedButtonNamesSearch;
-            panelSearchIPBing.Visible         = sender == checkedButtonIPBing;
+            panelTryTransferZone.Visible = sender == checkedButtonTransferZone;
+            panelTryCommonNames.Visible = sender == checkedButtonNamesSearch;
+            panelSearchIPBing.Visible = sender == checkedButtonIPBing;
         }
 
         /// <summary>
@@ -115,13 +112,13 @@ namespace FOCA
                 bSearchWeb = cbWebSearch.Checked;
 
                 //DuckDuck
-                if (rbWSDuckDuck.Checked)
-                    searchEngine = PanelWebSearcherInformation.Engine.DuckDuckWeb;
+                if (rbWSDuckDuckGo.Checked)
+                    searchEngine = PanelWebSearcherInformation.Engine.DuckDuckGoWeb;
                 //Bing
                 else if (rbWSBing.Checked)
                 {
                     searchEngine = PanelWebSearcherInformation.Engine.BingAPI;
-                    if (string.IsNullOrEmpty(Program.cfgCurrent.DuckDuckKey))
+                    if (string.IsNullOrEmpty(Program.cfgCurrent.BingApiKey))
                     {
                         var result = MessageBox.Show(
                             @"Before searching with Bing's API you must set up a Bing API Key. You can do it in 'Options > General Config', do you continue with Web option?", "", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
@@ -144,13 +141,17 @@ namespace FOCA
                         if (result == DialogResult.No)
                             return;
                     }
-                    
                 }
 
-                bSearchShodan       = cbShodan.Checked;
-                bSearchCommonNames  = cbDictionarySearch.Checked;
+                bSearchShodan = cbShodan.Checked;
+                bSearchCommonNames = cbDictionarySearch.Checked;
                 CommonNamesFileName = textBoxCommonNames.Text;
-                bSearchIPBing       = cbIpBing.Checked;
+                bSearchIPBing = cbIpBing.Checked;
+                if (bSearchIPBing && this.searchIPEngine == PanelSearchIPBing.Engine.BingAPI && String.IsNullOrWhiteSpace(Program.cfgCurrent.BingApiKey))
+                {
+                    MessageBox.Show("The Bing api key is not configured. You have to provide an api key, or use IP Bing Web instead of IP Bing API", "Bing API key not configured", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
 
                 MaxRecursion = Program.cfgCurrent.MaxRecursion;
                 thrSearch = new Thread(Search)
@@ -241,6 +242,7 @@ namespace FOCA
             }
             finally
             {
+                this.searchCancelToken?.Cancel();
                 Invoke(new MethodInvoker(delegate
                 {
                     buttonStart.Text = "&Start";
@@ -261,6 +263,7 @@ namespace FOCA
             thrSearch.Abort();
             ChangeTextCurrentSearch("");
             DisableSkip("Skip");
+            this.searchCancelToken?.Cancel();
         }
 
         /// <summary>
@@ -271,17 +274,6 @@ namespace FOCA
         private static void WebSearcherLogEvent(object sender, EventsThreads.ThreadStringEventArgs e)
         {
             Program.LogThis(new Log(Log.ModuleType.WebSearch, e.Message, Log.LogType.debug));
-        }
-
-        /// <summary>
-        /// Setup Web Search
-        /// </summary>
-        private void SetUpWebSearch()
-        {
-            var message =
-                $"Searching subdomains for {strDomain} in {PanelWebSearcherInformation.EngineToString(searchEngine)}";
-            Program.LogThis(new Log(Log.ModuleType.WebSearch, message, Log.LogType.debug));
-            Program.ChangeStatus(message);
         }
 
         /// <summary>
@@ -315,42 +307,6 @@ namespace FOCA
         }
 
         /// <summary>
-        /// Checks thread's end reason and logs if the reason was LimitReached
-        /// </summary>
-        /// <param name="endReason"></param>
-        /// <param name="currentResults"></param>
-        /// <param name="strSearchString"></param>
-        /// <param name="wordsCountLimit"></param>
-        private void CheckEndReason(EventsThreads.ThreadEndEventArgs.EndReasonEnum endReason,
-            IList<string> currentResults, string strSearchString, int wordsCountLimit)
-        {
-            if (strSearchString == null) return;
-            if (endReason != EventsThreads.ThreadEndEventArgs.EndReasonEnum.LimitReached) return;
-            var newSearchString = new StringBuilder($"site:{strDomain}");
-
-            var wordsCounter = 1;
-            foreach (var item in currentResults)
-            {
-                var strExcludeSite = $" -site:{item}";
-                if (CheckTotalLength(newSearchString.Length + strExcludeSite.Length))
-                    break;
-
-                newSearchString.Append(strExcludeSite);
-                if (++wordsCounter != wordsCountLimit) continue;
-                var excludeSubDomains = string.Empty;
-                var currentIndex = currentResults.IndexOf(item);
-                for (var i = currentIndex; i < currentResults.Count; i++)
-                    excludeSubDomains += currentResults[i] + " ";
-                LogLimit(excludeSubDomains);
-                break;
-            }
-            strSearchString = newSearchString.ToString();
-            Program.LogThis(new Log(Log.ModuleType.WebSearch,
-                $"[{PanelWebSearcherInformation.EngineToString(searchEngine)}] Searching again with restricted sites, search string: {strSearchString}",
-                Log.LogType.debug));
-        }
-
-        /// <summary>
         /// Adds and logs a subdomain discovery event
         /// </summary>
         /// <param name="strHost">Discovered subdomain</param>
@@ -366,370 +322,31 @@ namespace FOCA
                 Log.LogType.debug));
         }
 
-        /// <summary>
-        /// Perform the DNS search through Google Web
-        /// </summary>
-        private void GoogleWebSearch()
+        private void CaptureSearchResults(object sender, EventsThreads.CollectionFound<Uri> e)
         {
-            GoogleWebSearcher googleSearcher = null;
             try
             {
-                googleSearcher = new GoogleWebSearcher
+                LinkSearcher searcher = (LinkSearcher)sender;
+                foreach (var group in e.Data.GroupBy(p => p.Host))
                 {
-                    SearchAll       = true,
-                    cSafeSearch     = GoogleWebSearcher.SafeSearch.off,
-                    FirstSeen       = GoogleWebSearcher.FirstSeenGoogle.AnyTime,
-                    LocatedInRegion = GoogleWebSearcher.Region.AnyRegion,
-                    WriteInLanguage = GoogleWebSearcher.Language.AnyLanguage
-                };
-
-                var currentResults = new List<string>();
-
-                googleSearcher.SearcherLinkFoundEvent +=
-                    delegate(object sender, EventsThreads.ThreadListDataFoundEventArgs e)
+                    CancelIfSkipRequested();
+                    try
                     {
-                        var searcher = (GoogleWebSearcher) sender;
-                        foreach (var item in e.Data)
+                        AddAndLogSubdomainDiscover(group.Key);
+
+                        DomainsItem domain = Program.data.GetDomain(group.Key);
+                        foreach (Uri url in group)
                         {
-                            if (CheckToSkip())
-                                searcher.Abort();
-                            try
-                            {
-                                if (item == null)
-                                    continue;
-                                var url = new Uri((string) item);
-                                var strHost = url.Host;
-                                if (
-                                    currentResults.All(
-                                        d =>
-                                            !string.Equals(d, strHost, StringComparison.CurrentCultureIgnoreCase)))
-                                {
-                                    currentResults.Add(strHost);
-                                    AddAndLogSubdomainDiscover(strHost);
-                                }
-                                var domain = Program.data.GetDomain(url.Host);
-                                domain.map.AddUrl(url.ToString());
-                            }
-                            catch
-                            {
-                            }
+                            domain.map.AddUrl(url.ToString());
                         }
-                    };
-
-                googleSearcher.SearcherLogEvent += WebSearcherLogEvent;
-                var endReason = EventsThreads.ThreadEndEventArgs.EndReasonEnum.ErrorFound;
-                googleSearcher.SearcherEndEvent +=
-                    delegate(object o, EventsThreads.ThreadEndEventArgs e) { endReason = e.EndReason; };
-                var strSearchString = $"site:{strDomain}";
-                int resultsNumber;
-                do
-                {
-                    if (CheckToSkip())
-                        return;
-
-                    resultsNumber = currentResults.Count;
-                    googleSearcher.GetCustomLinks(strSearchString);
-                    googleSearcher.Join();
-
-                    CheckEndReason(endReason, currentResults, strSearchString, 32);
-                } while (endReason == EventsThreads.ThreadEndEventArgs.EndReasonEnum.LimitReached &&
-                         resultsNumber != currentResults.Count);
-            }
-            catch (ThreadAbortException)
-            {
-            }
-            finally
-            {
-                googleSearcher?.Abort();
-            }
-        }
-
-        /// <summary>
-        ///     Perform the search through Google API
-        /// </summary>
-        private void GoogleApiSearch()
-        {
-            GoogleAPISearcher googleApiSearcher = null;
-            try
-            {
-                googleApiSearcher = new GoogleAPISearcher
-                {
-                    GoogleApiKey = Program.cfgCurrent.GoogleApiKey,
-                    GoogleApiCx = Program.cfgCurrent.GoogleApiCx,
-                    SearchAll = true
-                };
-
-                var currentResults = new List<string>();
-                googleApiSearcher.SearcherLinkFoundEvent +=
-                    delegate(object sender, EventsThreads.ThreadListDataFoundEventArgs e)
+                    }
+                    catch
                     {
-                        var searcher = (GoogleAPISearcher) sender;
-
-                        foreach (var item in e.Data)
-                        {
-                            if (CheckToSkip())
-                                searcher.Abort();
-
-                            try
-                            {
-                                var gr = (GoogleAPISearcher.GoogleAPIResults) item;
-                                var url = new Uri(gr.Url);
-                                var strHost = url.Host;
-                                if (
-                                    currentResults.All(
-                                        D => !string.Equals(D, strHost, StringComparison.CurrentCultureIgnoreCase)))
-                                {
-                                    currentResults.Add(strHost);
-                                    AddAndLogSubdomainDiscover(strHost);
-                                }
-                                var domain = Program.data.GetDomain(url.Host);
-                                domain.map.AddUrl(url.ToString());
-                            }
-                            catch
-                            {
-                            }
-                        }
-                    };
-                googleApiSearcher.SearcherLogEvent += WebSearcherLogEvent;
-                var endReason = EventsThreads.ThreadEndEventArgs.EndReasonEnum.ErrorFound;
-                googleApiSearcher.SearcherEndEvent +=
-                    delegate(object o, EventsThreads.ThreadEndEventArgs e) { endReason = e.EndReason; };
-                var strSearchString = $"site:{strDomain}";
-                int resultsNumber;
-                do
-                {
-                    if (CheckToSkip())
-                        return;
-
-                    resultsNumber = currentResults.Count;
-                    googleApiSearcher.GetCustomLinks(strSearchString);
-                    googleApiSearcher.Join();
-
-                    CheckEndReason(endReason, currentResults, strSearchString, 32);
-                } while (endReason == EventsThreads.ThreadEndEventArgs.EndReasonEnum.LimitReached &&
-                         resultsNumber != currentResults.Count);
+                    }
+                }
             }
-            catch (ThreadAbortException)
+            catch (InvalidCastException)
             {
-            }
-            finally
-            {
-                googleApiSearcher?.Abort();
-            }
-        }
-
-        /// <summary>
-        /// Perform the search through DuckDuckGo Web
-        /// </summary>
-        private void DuckDuckWebSearch()
-        {
-            DuckduckgoWebSearcher duckSearcher = null;
-
-            try
-            {
-                duckSearcher = new DuckduckgoWebSearcher();
-
-                var currentResults = new List<string>();
-                duckSearcher.SearcherLinkFoundEvent +=
-                    delegate(object sender, EventsThreads.ThreadListDataFoundEventArgs e)
-                    {
-                        var searcher = (DuckduckgoWebSearcher) sender;
-                        foreach (var item in e.Data)
-                        {
-                            if (CheckToSkip())
-                                searcher.Abort();
-
-                            try
-                            {
-                                var url = new Uri((string)item);
-                                var strHost = url.Host;
-                                if (currentResults.All(d => !string.Equals(d, strHost, StringComparison.CurrentCultureIgnoreCase)))
-                                {
-                                    currentResults.Add(strHost);
-                                    AddAndLogSubdomainDiscover(strHost);
-                                }
-
-                                var domain = Program.data.GetDomain(url.Host);
-                                domain.map.AddUrl(url.ToString());
-                            }
-                            catch (Exception ex)
-                            {
-                                throw ex;
-                            }
-                        }
-                    };
-
-                duckSearcher.SearcherLogEvent += WebSearcherLogEvent;
-                var endReason = EventsThreads.ThreadEndEventArgs.EndReasonEnum.ErrorFound;
-                duckSearcher.SearcherEndEvent +=
-                    delegate (object o, EventsThreads.ThreadEndEventArgs e) { endReason = e.EndReason; };
-                var strSearchString = $"site:{strDomain}";
-                int nroResultados;
-
-                do
-                {
-                    if (CheckToSkip())
-                        return;
-
-                    nroResultados = currentResults.Count;
-                    duckSearcher.GetCustomLinks(strSearchString);
-                    duckSearcher.Join();
-
-                    CheckEndReason(endReason, currentResults, strSearchString, 49);
-                } while (endReason == EventsThreads.ThreadEndEventArgs.EndReasonEnum.LimitReached &&
-                         nroResultados != currentResults.Count);
-            }
-            catch (Exception ex)
-            {
-                throw ex;
-            }
-            finally
-            {
-                duckSearcher?.Abort();
-            }
-        }
-
-
-        /// <summary>
-        /// Perform the search through Bing Web
-        /// </summary>
-        private void BingWebSearch()
-        {
-            BingWebSearcher bingSearcher = null;
-            try
-            {
-                bingSearcher = new BingWebSearcher
-                {
-                    LocatedInRegion = BingWebSearcher.Region.AnyRegion,
-                    SearchAll = true,
-                    WriteInLanguage = BingWebSearcher.Language.AnyLanguage
-                };
-
-                var currentResults = new List<string>();
-                bingSearcher.SearcherLinkFoundEvent +=
-                    delegate(object sender, EventsThreads.ThreadListDataFoundEventArgs e)
-                    {
-                        var searcher = (BingWebSearcher) sender;
-
-                        foreach (var item in e.Data)
-                        {
-                            if (CheckToSkip())
-                                searcher.Abort();
-
-                            try
-                            {
-                                var url = new Uri((string) item);
-                                var strHost = url.Host;
-                                if (
-                                    currentResults.All(
-                                        D => !string.Equals(D, strHost, StringComparison.CurrentCultureIgnoreCase)))
-                                {
-                                    currentResults.Add(strHost);
-                                    AddAndLogSubdomainDiscover(strHost);
-                                }
-                                var domain = Program.data.GetDomain(url.Host);
-                                domain.map.AddUrl(url.ToString());
-                            }
-                            catch
-                            {
-                            }
-                        }
-                    };
-
-                bingSearcher.SearcherLogEvent += WebSearcherLogEvent;
-                var endReason = EventsThreads.ThreadEndEventArgs.EndReasonEnum.ErrorFound;
-                bingSearcher.SearcherEndEvent +=
-                    delegate(object o, EventsThreads.ThreadEndEventArgs e) { endReason = e.EndReason; };
-                var strSearchString = $"site:{strDomain}";
-                int nroResultados;
-                do
-                {
-                    if (CheckToSkip())
-                        return;
-
-                    nroResultados = currentResults.Count;
-                    bingSearcher.GetCustomLinks(strSearchString);
-                    bingSearcher.Join();
-
-                    CheckEndReason(endReason, currentResults, strSearchString, 49);
-                } while (endReason == EventsThreads.ThreadEndEventArgs.EndReasonEnum.LimitReached &&
-                         nroResultados != currentResults.Count);
-            }
-            catch (ThreadAbortException)
-            {
-            }
-            finally
-            {
-                bingSearcher?.Abort();
-            }
-        }
-
-        /// <summary>
-        /// Perform the search through Bing API
-        /// </summary>
-        private void BingApiSearch()
-        {
-            BingAPISearcher bingSearcherApi = null;
-            try
-            {
-                bingSearcherApi = new BingAPISearcher(Program.cfgCurrent.BingApiKey);
-
-                var currentResults = new List<string>();
-                bingSearcherApi.SearcherLinkFoundEvent +=
-                    delegate(object sender, EventsThreads.ThreadListDataFoundEventArgs e)
-                    {
-                        var searcher = (BingAPISearcher) sender;
-
-                        foreach (var item in e.Data)
-                        {
-                            if (CheckToSkip())
-                                searcher.Abort();
-
-                            try
-                            {
-                                var br = (BingApiResult) item;
-                                var url = new Uri(br.Url);
-                                var strHost = url.Host;
-                                if (
-                                    currentResults.All(
-                                        D => !string.Equals(D, strHost, StringComparison.CurrentCultureIgnoreCase)))
-                                {
-                                    currentResults.Add(strHost);
-                                    AddAndLogSubdomainDiscover(strHost);
-                                }
-                                var domain = Program.data.GetDomain(url.Host);
-                                domain.map.AddUrl(url.ToString());
-                            }
-                            catch
-                            {
-                            }
-                        }
-                    };
-                bingSearcherApi.SearcherLogEvent += WebSearcherLogEvent;
-                var endReason = EventsThreads.ThreadEndEventArgs.EndReasonEnum.ErrorFound;
-                bingSearcherApi.SearcherEndEvent +=
-                    delegate(object o, EventsThreads.ThreadEndEventArgs e) { endReason = e.EndReason; };
-                var strSearchString = $"site:{strDomain}";
-                int nroResultados;
-                do
-                {
-                    if (CheckToSkip())
-                        return;
-
-                    nroResultados = currentResults.Count;
-                    bingSearcherApi.GetCustomLinks(strSearchString);
-                    bingSearcherApi.Join();
-
-                    CheckEndReason(endReason, currentResults, strSearchString, 49);
-                } while (endReason == EventsThreads.ThreadEndEventArgs.EndReasonEnum.LimitReached &&
-                         nroResultados != currentResults.Count);
-            }
-            catch (ThreadAbortException)
-            {
-            }
-            finally
-            {
-                bingSearcherApi?.Abort();
             }
         }
 
@@ -738,28 +355,54 @@ namespace FOCA
         /// </summary>
         private void SearchWeb()
         {
-            SetUpWebSearch();
+            string message = $"Searching subdomains for {strDomain} in {PanelWebSearcherInformation.EngineToString(searchEngine)}";
+            Program.LogThis(new Log(Log.ModuleType.WebSearch, message, Log.LogType.debug));
+            Program.ChangeStatus(message);
 
+            LinkSearcher searcher = null;
             switch (searchEngine)
             {
                 case PanelWebSearcherInformation.Engine.GoogleWeb:
-                    GoogleWebSearch();
+                    searcher = new GoogleWebSearcher
+                    {
+                        cSafeSearch = GoogleWebSearcher.SafeSearch.off,
+                        FirstSeen = GoogleWebSearcher.FirstSeenGoogle.AnyTime,
+                        LocatedInRegion = GoogleWebSearcher.Region.AnyRegion,
+                        WriteInLanguage = GoogleWebSearcher.Language.AnyLanguage
+                    };
                     break;
                 case PanelWebSearcherInformation.Engine.GoogleAPI:
-                    GoogleApiSearch();
+                    searcher = new GoogleAPISearcher(Program.cfgCurrent.GoogleApiKey, Program.cfgCurrent.GoogleApiCx);
                     break;
                 case PanelWebSearcherInformation.Engine.BingWeb:
-                    BingWebSearch();
+                    searcher = new BingWebSearcher
+                    {
+                        LocatedInRegion = BingWebSearcher.Region.AnyRegion,
+                        WriteInLanguage = BingWebSearcher.Language.AnyLanguage
+                    };
                     break;
                 case PanelWebSearcherInformation.Engine.BingAPI:
-                    BingApiSearch();
+                    searcher = new BingAPISearcher(Program.cfgCurrent.BingApiKey);
                     break;
-                case PanelWebSearcherInformation.Engine.DuckDuckWeb:
-                    DuckDuckWebSearch();
+                case PanelWebSearcherInformation.Engine.DuckDuckGoWeb:
+                    searcher = new DuckduckgoWebSearcher();
                     break;
             }
-        }
 
+            try
+            {
+                searcher.ItemsFoundEvent += CaptureSearchResults;
+                searcher.SearcherLogEvent += WebSearcherLogEvent;
+                CancelIfSkipRequested();
+
+                searcher.SearchBySite(this.searchCancelToken, strDomain)
+                    .ContinueWith((e) => SearchEngineFinish(e, searcher.Name, Log.ModuleType.WebSearch))
+                    .Wait();
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
 
         /// <summary>
         /// Search subdomains using wordlists
@@ -782,7 +425,11 @@ namespace FOCA
                 return;
             }
 
-            var nsServerList = DNSUtil.GetNSServer(Resolve, strDomain, Resolve.DnsServers[0].Address.ToString());
+            List<string> nsServerList = new List<string>();
+            foreach (var item in Resolve.DnsServers)
+            {
+                nsServerList.AddRange(DNSUtil.GetNSServer(Resolve, strDomain, item.Address.ToString()));
+            }
 
             foreach (var nsServer in nsServerList)
             {
@@ -796,32 +443,41 @@ namespace FOCA
                     if (Program.cfgCurrent.ParallelDnsQueries != 0)
                         po.MaxDegreeOfParallelism = Program.cfgCurrent.ParallelDnsQueries;
 
-                    Parallel.ForEach(op, po, delegate(string name)
+                    try
                     {
-                        if (CheckToSkip())
-                            return;
-
-                        var subdomain = $"{name}.{strDomain}";
-                        Program.LogThis(new Log(Log.ModuleType.DNSCommonNames,
-                            string.Format("[{0}] Trying resolve subdomain: {1} with NameServer {0}", nsServer, subdomain),
-                            Log.LogType.debug));
-
-                        foreach (var ip in DNSUtil.GetHostAddresses(Resolve, subdomain, nsServer))
+                        Parallel.ForEach(op, po, delegate (string name)
                         {
+                            CancelIfSkipRequested();
+
+                            var subdomain = $"{name}.{strDomain}";
                             Program.LogThis(new Log(Log.ModuleType.DNSCommonNames,
-                                $"[{nsServer}] Found subdomain {subdomain}", Log.LogType.medium));
-                            try
+                                string.Format("[{0}] Trying resolve subdomain: {1} with NameServer {0}", nsServer, subdomain),
+                                Log.LogType.debug));
+
+                            foreach (var ip in DNSUtil.GetHostAddresses(Resolve, subdomain, nsServer))
                             {
-                                Program.data.AddResolution(subdomain, ip.ToString(),
-                                    $"Common Names [{subdomain}]", MaxRecursion, Program.cfgCurrent,
-                                    true);
+                                Program.LogThis(new Log(Log.ModuleType.DNSCommonNames,
+                                    $"[{nsServer}] Found subdomain {subdomain}", Log.LogType.medium));
+
+                                CancelIfSkipRequested();
+                                try
+                                {
+                                    Program.data.AddResolution(subdomain, ip.ToString(),
+                                        $"Common Names [{subdomain}]", MaxRecursion, Program.cfgCurrent,
+                                        true);
+                                }
+                                catch (Exception)
+                                {
+                                }
                             }
-                            catch (Exception)
-                            {
-                            }
-                        }
+                        });
                     }
-                        );
+                    catch (AggregateException)
+                    { }
+                    catch (OperationCanceledException)
+                    {
+                    }
+
                     if (!bSearchWithAllDNS)
                         break;
                 }
@@ -845,11 +501,7 @@ namespace FOCA
         /// <returns></returns>
         public bool SearchIpBingSingleIp(string ip)
         {
-            if (CheckToSkip())
-            {
-                EnableSkip("Skip to next IP");
-                return false;
-            }
+            CancelIfSkipRequested();
 
             if (ip.Contains("\\") || ip.Contains("/") || !DNSUtil.IsIPv4(ip))
                 return false;
@@ -857,133 +509,89 @@ namespace FOCA
             var message = $"[{PanelSearchIPBing.EngineToString(searchIPEngine)}] Searching domains in IP {ip}";
             Program.LogThis(new Log(Log.ModuleType.IPBingSearch, message, Log.LogType.debug));
             Program.ChangeStatus(message);
-            List<string> currentResults;
-
-            switch (searchIPEngine)
+            LinkSearcher searcher = null;
+            try
             {
-                case PanelSearchIPBing.Engine.BingWeb:
-                    try
-                    {
-                        var bingSearcher = new BingWebSearcher
+                switch (searchIPEngine)
+                {
+                    case PanelSearchIPBing.Engine.BingWeb:
+                        searcher = new BingWebSearcher
                         {
                             LocatedInRegion = BingWebSearcher.Region.AnyRegion,
-                            SearchAll = true,
                             WriteInLanguage = BingWebSearcher.Language.AnyLanguage
                         };
-
-                        currentResults = new List<string>();
-
-                        SerchLinkWebBingEvent(ip, bingSearcher, currentResults);
                         break;
-                    }
-                    catch
-                    {
+                    case PanelSearchIPBing.Engine.BingAPI:
+                        searcher = new BingAPISearcher(Program.cfgCurrent.BingApiKey);
                         break;
-                    }
-                case PanelSearchIPBing.Engine.BingAPI:
-                    var bingSearcherApi = new BingAPISearcher(Program.cfgCurrent.BingApiKey);
-                    currentResults = new List<string>();
-                    SerchLinkApiBingEvent(ip, bingSearcherApi, currentResults);
-                    break;
+                }
+                SearchIP(ip, searcher);
+            }
+            catch (Exception)
+            {
+                return false;
             }
 
             return true;
         }
 
-        private void SerchLinkApiBingEvent(string ip, BingAPISearcher bingSearcherApi, List<string> currentResults)
+        private void SearchIP(string ip, LinkSearcher searcher)
         {
-            bingSearcherApi.SearcherLinkFoundEvent +=
-                delegate(object sender, EventsThreads.ThreadListDataFoundEventArgs e)
+            ConcurrentBag<string> domainsFound = new ConcurrentBag<string>();
+            searcher.ItemsFoundEvent +=
+                delegate (object sender, EventsThreads.CollectionFound<Uri> e)
                 {
                     var op = Partitioner.Create(e.Data);
                     var po = new ParallelOptions();
                     if (Program.cfgCurrent.ParallelDnsQueries != 0)
                         po.MaxDegreeOfParallelism = Program.cfgCurrent.ParallelDnsQueries;
-                    Parallel.ForEach(op, po, delegate(object item, ParallelLoopState loopState)
+                    try
                     {
-                        if (CheckToSkip())
-                            loopState.Stop();
-                        try
+                        Parallel.ForEach(op, po, delegate (Uri url, ParallelLoopState loopState)
                         {
-                            var br = (BingApiResult) item;
-                            var url = new Uri(br.Url);
-                            if (
-                                currentResults.Any(d => string.Equals(d, url.Host, StringComparison.CurrentCultureIgnoreCase)))
-                                return;
-                            currentResults.Add(url.Host);
-                            var source = $"{Program.data.GetIpSource(ip)} > Bing IP Search [{url.Host}]";
-                            Program.data.AddResolution(url.Host, ip, source, MaxRecursion,
-                                Program.cfgCurrent, true);
-
-                            Program.LogThis(new Log(Log.ModuleType.IPBingSearch,
-                                $"[{PanelSearchIPBing.EngineToString(searchIPEngine)}] Found domain {url.Host} in IP {ip}",
-                                Log.LogType.medium));
-                        }
-                        catch
-                        {
-                        }
-                    }
-                        );
-                };
-            bingSearcherApi.SearcherLogEvent += IpBingSearcherLogEvent;
-            bingSearcherApi.GetCustomLinks($"ip:{ip}");
-            bingSearcherApi.Join();
-        }
-
-        /// <summary>
-        /// Event for search link found.
-        /// </summary>
-        /// <param name="ip"></param>
-        /// <param name="bingSearcher"></param>
-        /// <param name="currentResults"></param>
-        private void SerchLinkWebBingEvent(string ip, BingWebSearcher bingSearcher, List<string> currentResults)
-        {
-            bingSearcher.SearcherLinkFoundEvent +=
-                delegate(object sender, EventsThreads.ThreadListDataFoundEventArgs e)
-                {
-                    var op = Partitioner.Create(e.Data);
-                    var po = new ParallelOptions();
-                    if (Program.cfgCurrent.ParallelDnsQueries != 0)
-                        po.MaxDegreeOfParallelism = Program.cfgCurrent.ParallelDnsQueries;
-                    Parallel.ForEach(op, po, delegate(object item, ParallelLoopState loopState)
-                    {
-                        if (CheckToSkip())
-                            loopState.Stop();
-                        try
-                        {
-                            var url = new Uri((string) item);
-                            if (currentResults.Any(d => d.ToLower() == url.Host.ToLower())) return;
-                            currentResults.Add(url.Host);
-
-                            var isInBaseDomain = false;
+                            CancelIfSkipRequested();
                             try
                             {
-                                if (Dns.GetHostAddresses(url.Host).Any(IP => IP.ToString() == ip))
-                                    isInBaseDomain = true;
+                                if (domainsFound.Any(d => d.ToLower() == url.Host.ToLower()))
+                                {
+                                    return;
+                                }
+                                domainsFound.Add(url.Host);
+
+                                bool isInBaseDomain = false;
+                                try
+                                {
+                                    if (Dns.GetHostAddresses(url.Host).Any(IP => IP.ToString() == ip))
+                                        isInBaseDomain = true;
+                                }
+                                catch
+                                {
+                                }
+
+                                if (!isInBaseDomain)
+                                    return;
+
+                                string source = $"{Program.data.GetIpSource(ip)} > {searcher.Name} [{url.Host}]";
+                                Program.data.AddResolution(url.Host, ip, source, MaxRecursion, Program.cfgCurrent, true);
+
+                                Program.LogThis(new Log(Log.ModuleType.IPBingSearch,
+                                    $"[{PanelSearchIPBing.EngineToString(searchIPEngine)}] Found domain {url.Host} in IP {ip}",
+                                    Log.LogType.medium));
                             }
                             catch
                             {
                             }
-                            if (!isInBaseDomain)
-                                return;
-
-                            var source = $"{Program.data.GetIpSource(ip)} > Bing IP Search [{url.Host}]";
-                            Program.data.AddResolution(url.Host, ip, source, MaxRecursion,
-                                Program.cfgCurrent, true);
-
-                            Program.LogThis(new Log(Log.ModuleType.IPBingSearch,
-                                $"[{PanelSearchIPBing.EngineToString(searchIPEngine)}] Found domain {url.Host} in IP {ip}",
-                                Log.LogType.medium));
-                        }
-                        catch
-                        {
-                        }
+                        });
                     }
-                        );
+                    catch (AggregateException)
+                    {
+                    }
                 };
-            bingSearcher.SearcherLogEvent += IpBingSearcherLogEvent;
-            bingSearcher.GetCustomLinks($"ip:{ip}");
-            bingSearcher.Join();
+            searcher.SearcherLogEvent += IpBingSearcherLogEvent;
+
+            searcher.CustomSearch(this.searchCancelToken, $"ip:{ip}")
+                .ContinueWith((e) => SearchEngineFinish(e, searcher.Name, Log.ModuleType.IPBingSearch))
+                .Wait();
         }
 
         /// <summary>
@@ -1009,57 +617,30 @@ namespace FOCA
         /// </summary>
         private void SearchShodan()
         {
-            var ranges = new ModifiedComponents.ThreadSafeList<string>();
-            var ips = Program.data.GetIPs().Select(x => x.Remove(x.LastIndexOf('.') + 1)).Distinct().ToList();
+            List<string> ranges = Program.data.GetIPs().Select(x => x.Remove(x.LastIndexOf('.') + 1)).Distinct().ToList();
 
-            ips.ForEach(x=> ranges.Add(x));
-
-            var lstIpsInRanges = new ModifiedComponents.ThreadSafeList<string>();
+            List<IPAddress> lstIpsInRanges = new List<IPAddress>();
 
             foreach (var t in ranges)
             {
                 for (var i = 0; i < 254; i++)
                 {
-                    var targetIp = t + i;
-                    if (Program.data.GetIp(targetIp).Ip != "")
-                        lstIpsInRanges.Add(targetIp);
+                    string targetIp = t + i;
+                    if (!String.IsNullOrWhiteSpace(Program.data.GetIp(targetIp).Ip) && IPAddress.TryParse(targetIp, out IPAddress currentIP))
+                        lstIpsInRanges.Add(currentIP);
                 }
             }
-            SearchIpInShodanNoAsync(lstIpsInRanges);
+            SearchIpInShodan(lstIpsInRanges);
         }
 
-        /// <summary>
-        /// Search a netrange in Shodan
-        /// </summary>
-        /// <param name="lstNetRange"></param>
-        public void SearchNetrangeShodanNoAsync(ThreadSafeList<NetRange> lstNetRange)
-        {
-            Invoke(new MethodInvoker(delegate
-            {
-                const string strMessage = "Searching IPs in Shodan by netrange";
-                Program.FormMainInstance.toolStripStatusLabelLeft.Text = strMessage;
-                Program.LogThis(new Log(Log.ModuleType.ShodanSearch, strMessage, Log.LogType.debug));
-            }));
-            if (string.IsNullOrEmpty(Program.cfgCurrent.ShodanApiKey))
-            {
-                MessageBox.Show(@"Before searching with Shodan's API you must set up a Shodan API Key. You can do it in 'Options > General Config'");
-                return;
-            }
-            var sr = new ShodanRecognition(Program.cfgCurrent.ShodanApiKey);
-            sr.StartRecognitionNetRangeNoAsync(lstNetRange);
-        }
-
-        /// <summary>
-        /// Search an IP in Shodan
-        /// </summary>
-        /// <param name="oThreadSafeListIp"></param>
-        public void SearchIpInShodanNoAsync(object oThreadSafeListIp)
+        public void SearchIpInShodan(List<IPAddress> lstIPs)
         {
             if (string.IsNullOrEmpty(Program.cfgCurrent.ShodanApiKey))
             {
                 MessageBox.Show(@"Before searching with Shodan's API you must set up a Shodan API Key. You can do it in 'Options > General Config'");
                 return;
             }
+
             Invoke(new MethodInvoker(delegate
             {
                 const string strMessage = "Searching IPs in Shodan";
@@ -1067,29 +648,47 @@ namespace FOCA
                 Program.LogThis(new Log(Log.ModuleType.ShodanSearch, strMessage, Log.LogType.debug));
             }));
 
-            var lstIPs = (oThreadSafeListIp as ModifiedComponents.ThreadSafeList<string>);
+            ShodanSearcher shodanSearcher = new ShodanSearcher(Program.cfgCurrent.ShodanApiKey);
+            shodanSearcher.ItemsFoundEvent += Program.FormMainInstance.ShodanDataFound;
+            shodanSearcher.SearcherLogEvent += Program.FormMainInstance.ShodanLog;
 
-            var shodanItem = new ShodanRecognition(Program.cfgCurrent.ShodanApiKey, lstIPs);
-            shodanItem.DataFoundEvent += Program.FormMainInstance.ShodanDataFound;
-            shodanItem.LogEvent += Program.FormMainInstance.ShodanLog;
-            shodanItem.EndEvent += delegate
+            shodanSearcher.CustomSearch(this.searchCancelToken, lstIPs)
+                .ContinueWith((e) => SearchEngineFinish(e, shodanSearcher.Name, Log.ModuleType.ShodanSearch))
+                .Wait();
+        }
+
+        private void SearchEngineFinish(Task<int> previousTask, string engineName, Log.ModuleType module)
+        {
+            string logMessage = String.Empty;
+            Log.LogType logType = Log.LogType.medium;
+            if (previousTask.IsCanceled)
             {
-                const string strMessage = "Finish Searching IPs in Shodan";
-                Program.FormMainInstance.toolStripStatusLabelLeft.Text = strMessage;
-                Program.LogThis(new Log(Log.ModuleType.Shodan, strMessage, Log.LogType.debug));
-                shodanItem = null;
-            };
+                logMessage = $"{engineName} search aborted!!";
+            }
+            else if (previousTask.IsFaulted)
+            {
+                logMessage = $"An error has ocurred on {engineName}: {String.Join(Environment.NewLine, (previousTask.Exception)?.InnerException.Message)}.";
+                logType = Log.LogType.error;
+            }
+            else if (previousTask.IsCompleted)
+            {
+                logMessage = $"{engineName} search finished successfully!!";
+            }
 
-            shodanItem.StartRecognitionNoAsync();
+            Program.LogThis(new Log(module, logMessage, logType));
         }
 
         /// <summary>
         /// Check to skip.
         /// </summary>
         /// <returns></returns>
-        private bool CheckToSkip()
+        private void CancelIfSkipRequested()
         {
-            return bSkipToNextSearch;
+            if (bSkipToNextSearch)
+            {
+                this.searchCancelToken.Cancel();
+                this.searchCancelToken.Token.ThrowIfCancellationRequested();
+            }
         }
 
         /// <summary>
@@ -1111,8 +710,8 @@ namespace FOCA
         private void DisableSkip(string text)
         {
             CheckForIllegalCrossThreadCalls = false;
-            btSkip.Enabled                  = false;
-            btSkip.Text                     = text;
+            btSkip.Enabled = false;
+            btSkip.Text = text;
             CheckForIllegalCrossThreadCalls = true;
         }
 
@@ -1123,26 +722,30 @@ namespace FOCA
         private void EnableSkip(string text)
         {
             CheckForIllegalCrossThreadCalls = false;
-            bSkipToNextSearch               = false;
-            btSkip.Enabled                  = true;
-            btSkip.Text                     = text;
+            bSkipToNextSearch = false;
+            btSkip.Enabled = true;
+            btSkip.Text = text;
             CheckForIllegalCrossThreadCalls = true;
+            if (this.searchCancelToken == null || this.searchCancelToken.IsCancellationRequested)
+            {
+                this.searchCancelToken = new CancellationTokenSource();
+            }
         }
 
         private void btSkip_Click(object sender, EventArgs e)
         {
             bSkipToNextSearch = true;
-            btSkip.Enabled    = false;
+            btSkip.Enabled = false;
         }
 
         private void MouseOver(object sender, MouseEventArgs e)
         {
-            panelWebSearcher.Visible          = sender == checkedButtonWebSearcher;
+            panelWebSearcher.Visible = sender == checkedButtonWebSearcher;
             panelDNSSearchInformation.Visible = sender == checkedButtonDNSSearch;
-            panelTryTransferZone.Visible      = sender == checkedButtonTransferZone;
-            panelTryCommonNames.Visible       = sender == checkedButtonNamesSearch;
-            panelSearchIPBing.Visible         = sender == checkedButtonIPBing;
-            panelShodan.Visible               = sender == checkedButtonShodan;
+            panelTryTransferZone.Visible = sender == checkedButtonTransferZone;
+            panelTryCommonNames.Visible = sender == checkedButtonNamesSearch;
+            panelSearchIPBing.Visible = sender == checkedButtonIPBing;
+            panelShodan.Visible = sender == checkedButtonShodan;
         }
 
         /// <summary>
@@ -1173,9 +776,9 @@ namespace FOCA
                 lbWs1.Text = @"-Max 1000 results for each search";
                 lbWs2.Text = @"-Max 32 words in a search string";
             }
-            else if (rbWSDuckDuck.Checked)
+            else if (rbWSDuckDuckGo.Checked)
             {
-                lbWsTitle.Text = @"DuckDuck  limitations";
+                lbWsTitle.Text = @"DuckDuckGo  limitations";
                 lbWs1.Text = @"-Max 64 results for each search";
                 lbWs2.Text = @"-Max 32 words in a search string";
             }
@@ -1190,10 +793,15 @@ namespace FOCA
         private void IpBingEngineChanged(object sender, EventArgs e)
         {
             if (rbIPBingAPI.Checked)
+            {
                 lbIpBingTitle.Text = @"Bing API  limitations";
-
+                this.searchIPEngine = PanelSearchIPBing.Engine.BingAPI;
+            }
             else if (rbIPBingWeb.Checked)
+            {
                 lbIpBingTitle.Text = @"Bing Web  limitations";
+                this.searchIPEngine = PanelSearchIPBing.Engine.BingWeb;
+            }
 
             lbIpBing1.Text = @"-Max 1000 results for each search";
             lbIpBing2.Text = @"-Max 49 words in a search string";

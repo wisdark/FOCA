@@ -1,9 +1,10 @@
-using System.Collections.Generic;
-using System.Linq;
-using FOCA.Searcher;
 using Google.Apis.Customsearch.v1;
 using Google.Apis.Customsearch.v1.Data;
 using Google.Apis.Services;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
 
 namespace SearcherCore.Searcher.GoogleAPI
 {
@@ -12,18 +13,18 @@ namespace SearcherCore.Searcher.GoogleAPI
     /// </summary>
     public class SearchGoogleApi
     {
-        public delegate void StatusUpdateHandler(object sender, string e);
+        private const int ResultsPerPage = 10;
+        private const int MaxPages = 10;
 
-        private readonly string CX;
-        public string API_KEY;
+        public string CX { get; }
+
+        public string ApiKey { get; }
 
         public SearchGoogleApi(string key, string cx)
         {
-            API_KEY = key;
+            ApiKey = key;
             CX = cx;
         }
-
-        public event StatusUpdateHandler SearcherLinkFoundEvent;
 
         private CseResource.ListRequest BuildRequest(string searchString)
         {
@@ -32,7 +33,7 @@ namespace SearcherCore.Searcher.GoogleAPI
             var service = new CustomsearchService(new BaseClientService.Initializer
             {
                 ApplicationName = "Foca",
-                ApiKey = API_KEY
+                ApiKey = ApiKey
             });
 
             var listRequest = service.Cse.List(" ");
@@ -40,45 +41,62 @@ namespace SearcherCore.Searcher.GoogleAPI
             listRequest.Cx = CX;
             listRequest.Safe = 0;
             listRequest.Hq = searchString;
+            listRequest.Num = ResultsPerPage;
 
             return listRequest;
         }
 
-        public List<GoogleAPISearcher.GoogleAPIResults> RunService(string searchString)
+        public ICollection<Uri> RunService(string searchString, CancellationToken cancelToken)
         {
-            var listRequest = BuildRequest(searchString);
-            IList<Result> paging = new List<Result>();
-            var urls = new List<GoogleAPISearcher.GoogleAPIResults>();
-            var count = 0;
-            while (paging != null)
+            CseResource.ListRequest listRequest = BuildRequest(searchString);
+            IList<Result> paging;
+            HashSet<Uri> urls = new HashSet<Uri>();
+            int pageNumber = 0;
+            do
             {
-                listRequest.Start = count*10 + 1;
+                listRequest.Start = pageNumber * ResultsPerPage + 1;
                 try
                 {
                     paging = listRequest.Execute().Items;
                     if (paging != null)
                     {
-                        urls.AddRange(
-                            paging.Select(
-                                item => new GoogleAPISearcher.GoogleAPIResults {Url = item.Link, Title = item.Title}));
                         foreach (var item in paging)
                         {
-                            UpdateStatus(item.Link);
+                            if (Uri.TryCreate(item.Link, UriKind.Absolute, out Uri urlFound))
+                            {
+                                urls.Add(urlFound);
+                            }
+                            cancelToken.ThrowIfCancellationRequested();
                         }
                     }
-                    count++;
+                    pageNumber++;
+                }
+                catch (Google.GoogleApiException e)
+                {
+                    if (e.Error != null && e.Error.Errors != null && e.Error.Errors.Any())
+                    {
+                        if (e.Error.Errors.Any(p => "keyInvalid".Equals(p.Reason, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            throw new ArgumentException("The provided API key is invalid", nameof(ApiKey));
+                        }
+                        else if (e.Error.Errors.Any(p => "dailyLimitExceeded".Equals(p.Reason, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            throw new InvalidOperationException("Daily quota exceeded");
+                        }
+                    }
+                    throw;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
                 }
                 catch
                 {
                     paging = null;
                 }
-            }
+                cancelToken.ThrowIfCancellationRequested();
+            } while (paging != null && pageNumber < MaxPages);
             return urls;
-        }
-
-        private void UpdateStatus(string status)
-        {
-            SearcherLinkFoundEvent?.Invoke(this, status);
         }
     }
 }
