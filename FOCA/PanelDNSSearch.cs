@@ -56,8 +56,7 @@ namespace FOCA
             if (Program.DesignMode()) return;
             Resolve = new Resolver
             {
-                TimeOut = 1000,
-                SearchWithAllDNS = Program.cfgCurrent.UseAllDns
+                TimeOut = 1000
             };
 
             Program.data.SetResolver(Resolve);
@@ -326,7 +325,6 @@ namespace FOCA
         {
             try
             {
-                LinkSearcher searcher = (LinkSearcher)sender;
                 foreach (var group in e.Data.GroupBy(p => p.Host))
                 {
                     CancelIfSkipRequested();
